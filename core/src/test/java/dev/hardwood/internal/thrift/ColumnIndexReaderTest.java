@@ -9,38 +9,30 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ColumnIndex;
 
+import static dev.hardwood.internal.thrift.ThriftStructBuilder.TYPE_I32;
+import static dev.hardwood.internal.thrift.ThriftStructBuilder.TYPE_LIST;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ColumnIndexReaderTest {
 
-    private static final byte TYPE_I32 = 0x05;
-    private static final byte TYPE_LIST = 0x09;
-
-    // Thrift Compact Protocol list element type codes.
-    private static final byte ELEM_BOOL = 0x01;
-    private static final byte ELEM_I64 = 0x06;
-    private static final byte ELEM_BINARY = 0x08;
-    private static final byte ELEM_STRUCT = 0x0C;
-
     @Test
-    void readsCoreFieldsAndSkipsHistogramAndNanCountFields() throws IOException {
-        // Fields 6 (repetition_level_histograms), 7 (definition_level_histograms) and
-        // 8 (nan_counts) are all list<i64> and must be skipped without affecting fields 1-5.
+    void readsAllFields() throws IOException {
+        // Three pages of a maxDef 1 / maxRep 0 column: the definition-level histogram
+        // contributes two entries per page, the repetition-level histogram one.
         byte[] thrift = struct()
                 .field(1, TYPE_LIST).boolList(false, true, false)
                 .field(2, TYPE_LIST).binaryList(bytes(1), bytes(0), bytes(21))
                 .field(3, TYPE_LIST).binaryList(bytes(10), bytes(0), bytes(30))
                 .field(4, TYPE_I32).i32(1) // ASCENDING
                 .field(5, TYPE_LIST).i64List(0, 3, 0)
-                .field(6, TYPE_LIST).i64List(1, 2, 3, 4)
-                .field(7, TYPE_LIST).i64List(5, 6, 7, 8)
-                .field(8, TYPE_LIST).i64List(0, 0, 0)
+                .field(6, TYPE_LIST).i64List(4, 3, 4)
+                .field(7, TYPE_LIST).i64List(0, 4, 3, 0, 0, 4)
+                .field(8, TYPE_LIST).i64List(0, 0, 1)
                 .stop().build();
 
         ColumnIndex index = ColumnIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
@@ -51,13 +43,37 @@ class ColumnIndexReaderTest {
         assertThat(index.maxValues().get(2)).isEqualTo(bytes(30));
         assertThat(index.boundaryOrder()).isEqualTo(ColumnIndex.BoundaryOrder.ASCENDING);
         assertThat(index.nullCounts()).containsExactly(0L, 3L, 0L);
+        assertThat(index.repetitionLevelHistograms()).containsExactly(4L, 3L, 4L);
+        assertThat(index.definitionLevelHistograms()).containsExactly(0L, 4L, 3L, 0L, 0L, 4L);
+        assertThat(index.nanCounts()).containsExactly(0L, 0L, 1L);
         assertThat(index.getPageCount()).isEqualTo(3);
     }
 
     @Test
+    void reportsOmittedOptionalFieldsAsNull() throws IOException {
+        // Only fields 1-4 are required. A writer predating the histograms leaves every
+        // optional list absent, which stays distinct from a present but empty one.
+        byte[] thrift = struct()
+                .field(1, TYPE_LIST).boolList(false, false)
+                .field(2, TYPE_LIST).binaryList(bytes(1), bytes(2))
+                .field(3, TYPE_LIST).binaryList(bytes(9), bytes(9))
+                .field(4, TYPE_I32).i32(0)
+                .stop().build();
+
+        ColumnIndex index = ColumnIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
+
+        assertThat(index.nullCounts()).isNull();
+        assertThat(index.repetitionLevelHistograms()).isNull();
+        assertThat(index.definitionLevelHistograms()).isNull();
+        assertThat(index.nanCounts()).isNull();
+        assertThat(index.getPageCount()).isEqualTo(2);
+    }
+
+    @Test
     void skipsStructTypedFieldSevenWithoutCorruptingLaterFields() throws IOException {
-        // A malformed/adversarial file places STRUCT-typed elements at field 7. The reader must
-        // skip them cleanly (no geospatial decode) and still parse the surrounding fields.
+        // A malformed/adversarial file places STRUCT-typed elements at field 7, where a
+        // list<i64> belongs. The reader must skip them cleanly and still parse the
+        // surrounding fields — including field 8, which follows the malformed one.
         byte[] thrift = struct()
                 .field(1, TYPE_LIST).boolList(false, false)
                 .field(2, TYPE_LIST).binaryList(bytes(1), bytes(2))
@@ -72,11 +88,39 @@ class ColumnIndexReaderTest {
 
         assertThat(index.nullPages()).containsExactly(false, false);
         assertThat(index.nullCounts()).containsExactly(2L, 5L);
+        assertThat(index.definitionLevelHistograms()).isNull();
+        assertThat(index.nanCounts()).containsExactly(0L, 0L);
         assertThat(index.getPageCount()).isEqualTo(2);
     }
 
-    private static ThriftBuilder struct() {
-        return new ThriftBuilder();
+    @Test
+    void skipsMultiByteStructElementsAtHistogramFieldWithoutDesync() throws IOException {
+        // Field 6 is typed list<struct> with bodies several bytes long. Decoding those
+        // bytes as varints would leave the cursor mid-struct and shift every later field,
+        // so the element type — not just the field type — has to drive the skip.
+        byte[] payload = struct()
+                .field(1, TYPE_I32).i32(1234567)
+                .field(2, TYPE_I32).i32(7654321)
+                .stop().build();
+        byte[] thrift = struct()
+                .field(1, TYPE_LIST).boolList(true)
+                .field(2, TYPE_LIST).binaryList(bytes(1))
+                .field(3, TYPE_LIST).binaryList(bytes(2))
+                .field(4, TYPE_I32).i32(0)
+                .field(6, TYPE_LIST).structList(payload, payload)
+                .field(7, TYPE_LIST).i64List(3, 9)
+                .field(8, TYPE_LIST).i64List(11)
+                .stop().build();
+
+        ColumnIndex index = ColumnIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
+
+        assertThat(index.repetitionLevelHistograms()).isNull();
+        assertThat(index.definitionLevelHistograms()).containsExactly(3L, 9L);
+        assertThat(index.nanCounts()).containsExactly(11L);
+    }
+
+    private static ThriftStructBuilder struct() {
+        return new ThriftStructBuilder();
     }
 
     private static byte[] bytes(int... values) {
@@ -85,97 +129,5 @@ class ColumnIndexReaderTest {
             out[i] = (byte) values[i];
         }
         return out;
-    }
-
-    /// Hand-rolled Thrift Compact Protocol struct builder for tests.
-    private static final class ThriftBuilder {
-        private final ByteBuffer buffer = ByteBuffer.allocate(512).order(ByteOrder.LITTLE_ENDIAN);
-        private short lastFieldId;
-
-        ThriftBuilder field(int id, byte type) {
-            short delta = (short) (id - lastFieldId);
-            if (delta > 0 && delta <= 15) {
-                buffer.put((byte) ((delta << 4) | (type & 0x0F)));
-            }
-            else {
-                buffer.put(type);
-                writeZigzag(id);
-            }
-            lastFieldId = (short) id;
-            return this;
-        }
-
-        ThriftBuilder boolList(boolean... values) {
-            listHeader(values.length, ELEM_BOOL);
-            for (boolean value : values) {
-                buffer.put((byte) (value ? 0x01 : 0x02));
-            }
-            return this;
-        }
-
-        ThriftBuilder binaryList(byte[]... values) {
-            listHeader(values.length, ELEM_BINARY);
-            for (byte[] value : values) {
-                writeVarint(value.length);
-                buffer.put(value);
-            }
-            return this;
-        }
-
-        ThriftBuilder i64List(long... values) {
-            listHeader(values.length, ELEM_I64);
-            for (long value : values) {
-                writeZigzag(value);
-            }
-            return this;
-        }
-
-        ThriftBuilder emptyStructList(int count) {
-            listHeader(count, ELEM_STRUCT);
-            for (int i = 0; i < count; i++) {
-                buffer.put((byte) 0); // empty struct: immediate STOP
-            }
-            return this;
-        }
-
-        ThriftBuilder i32(int value) {
-            writeZigzag(value);
-            return this;
-        }
-
-        ThriftBuilder stop() {
-            buffer.put((byte) 0);
-            return this;
-        }
-
-        byte[] build() {
-            byte[] out = new byte[buffer.position()];
-            buffer.flip();
-            buffer.get(out);
-            return out;
-        }
-
-        private void listHeader(int size, byte elementType) {
-            if (size < 15) {
-                buffer.put((byte) ((size << 4) | (elementType & 0x0F)));
-            }
-            else {
-                buffer.put((byte) (0xF0 | (elementType & 0x0F)));
-                writeVarint(size);
-            }
-        }
-
-        private void writeVarint(long value) {
-            long v = value;
-            while ((v & ~0x7FL) != 0) {
-                buffer.put((byte) ((v & 0x7F) | 0x80));
-                v >>>= 7;
-            }
-            buffer.put((byte) (v & 0x7F));
-        }
-
-        private void writeZigzag(long value) {
-            writeVarint((value << 1) ^ (value >> 63));
-        }
     }
 }

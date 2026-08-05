@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 
@@ -240,6 +242,27 @@ public class ThriftCompactReader {
         }
 
         return new CollectionHeader(elementType, size);
+    }
+
+    /// Read a `list<i64>` in full: the collection header followed by its elements.
+    ///
+    /// A list declaring any other element type is skipped element-wise and reported as
+    /// `null`. Its elements are not varints, so decoding them as such would desynchronise
+    /// the stream and corrupt every field that follows; a file that mistypes a list loses
+    /// only that field.
+    public List<Long> readI64List() throws IOException {
+        CollectionHeader listHeader = readListHeader();
+        if (listHeader.elementType() != TYPE_I64) {
+            for (int i = 0; i < listHeader.size(); i++) {
+                skipField(listHeader.elementType());
+            }
+            return null;
+        }
+        List<Long> values = new ArrayList<>(listHeader.size());
+        for (int i = 0; i < listHeader.size(); i++) {
+            values.add(readI64());
+        }
+        return values;
     }
 
     /// Skip a field of the given type.
