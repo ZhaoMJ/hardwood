@@ -76,6 +76,28 @@ class PageEncodingStatsReaderTest {
     }
 
     @Test
+    void unrecognizedEncodingIsCarriedThroughAsUnknown() throws IOException {
+        // encoding = 10, which no released version of the format defines. Like an unrecognized
+        // page type, it must not make the footer unreadable.
+        ColumnMetaData metaData = ColumnMetaDataReader.read(reader(
+                ENCODING_STATS_FIELD, 0x1C,
+                0x15, 0x00, 0x15, 0x14, 0x15, 0x02, 0x00,
+                0x00));
+
+        assertThat(metaData.encodingStats())
+                .containsExactly(new PageEncodingStats(PageType.DATA_PAGE, Encoding.UNKNOWN, 1));
+    }
+
+    @Test
+    void nonListFieldIsSkipped() throws IOException {
+        // Field 13 declared as an i32 rather than a list. The field is optional and informational,
+        // so it is skipped rather than failing the footer.
+        ColumnMetaData metaData = ColumnMetaDataReader.read(reader(0xD5, 0x02, 0x00));
+
+        assertThat(metaData.encodingStats()).isEmpty();
+    }
+
+    @Test
     void unknownStructFieldIsSkipped() throws IOException {
         // A field 4 the format does not define today, appended after count.
         ColumnMetaData metaData = ColumnMetaDataReader.read(reader(
@@ -106,6 +128,18 @@ class PageEncodingStatsReaderTest {
                 0x00)))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("PageEncodingStats.count");
+    }
+
+    @Test
+    void nonStructListElementTypeRejected() {
+        // Field 13 declared as list<i32> (element type 0x05) carrying the value 1. Elements are
+        // read as structs, so decoding it would misread value bytes as field headers.
+        assertThatThrownBy(() -> ColumnMetaDataReader.read(reader(
+                ENCODING_STATS_FIELD, 0x15,
+                0x02,
+                0x00)))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("encoding_stats");
     }
 
     @Test
