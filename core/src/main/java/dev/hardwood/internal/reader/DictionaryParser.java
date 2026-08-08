@@ -16,6 +16,7 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Parses dictionary pages from column chunk data.
@@ -39,7 +40,7 @@ public final class DictionaryParser {
         ThriftCompactReader probeReader = new ThriftCompactReader(dictRegion, 0);
         PageHeader header = PageHeaderReader.read(probeReader);
 
-        if (header.type() != PageHeader.PageType.DICTIONARY_PAGE) {
+        if (header.type() != PageType.DICTIONARY_PAGE) {
             return null;
         }
 

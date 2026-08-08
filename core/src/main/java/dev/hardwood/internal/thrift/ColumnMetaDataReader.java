@@ -18,6 +18,7 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.GeospatialStatistics;
+import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 
@@ -49,6 +50,7 @@ public class ColumnMetaDataReader {
         GeospatialStatistics geospatialStatistics = null;
         Long bloomFilterOffset = null;
         Integer bloomFilterLength = null;
+        List<PageEncodingStats> encodingStats = List.of();
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -154,6 +156,14 @@ public class ColumnMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 13: // encoding_stats (optional list<PageEncodingStats>)
+                    if (header.type() == 0x09) { // LIST
+                        encodingStats = PageEncodingStatsReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 case 14: // bloom_filter_offset (optional i64)
                     if (header.type() == 0x06) {
                         bloomFilterOffset = reader.readI64();
@@ -186,6 +196,7 @@ public class ColumnMetaDataReader {
 
         return new ColumnMetaData(type, encodings, new FieldPath(List.copyOf(pathInSchema)), codec,
                 numValues, totalUncompressedSize, totalCompressedSize, keyValueMetadata, dataPageOffset,
-                dictionaryPageOffset, statistics, geospatialStatistics, bloomFilterOffset, bloomFilterLength);
+                dictionaryPageOffset, statistics, geospatialStatistics, bloomFilterOffset, bloomFilterLength,
+                encodingStats);
     }
 }

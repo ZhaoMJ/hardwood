@@ -10,6 +10,7 @@ package dev.hardwood.internal.thrift;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 
@@ -27,6 +28,14 @@ class ThriftEnumLookup {
             PhysicalType.DOUBLE,                 // 5
             PhysicalType.BYTE_ARRAY,             // 6
             PhysicalType.FIXED_LEN_BYTE_ARRAY    // 7
+    };
+
+    // Indexed by Thrift value (0-3)
+    private static final PageType[] PAGE_TYPES = {
+            PageType.DATA_PAGE,        // 0
+            PageType.INDEX_PAGE,       // 1
+            PageType.DICTIONARY_PAGE,  // 2
+            PageType.DATA_PAGE_V2      // 3
     };
 
     // Indexed by Thrift value (0-2)
@@ -119,6 +128,13 @@ class ThriftEnumLookup {
             }
         }
         return Encoding.UNKNOWN;
+    }
+
+    static PageType pageType(int value) {
+        if (value >= 0 && value < PAGE_TYPES.length) {
+            return PAGE_TYPES[value];
+        }
+        return PageType.UNKNOWN;
     }
 
     static CompressionCodec compressionCodec(int value) {

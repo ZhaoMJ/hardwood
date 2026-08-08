@@ -26,6 +26,7 @@ import java.util.Map;
 /// @param geospatialStatistics column chunk geospatial statistics (bounding box, geospatial types), or `null` if absent
 /// @param bloomFilterOffset file offset of the bloom filter for this column chunk, or `null` if absent
 /// @param bloomFilterLength length of the bloom filter in bytes, or `null` if absent
+/// @param encodingStats number of pages written per (page type, encoding) pair in this column chunk, or an empty list if absent
 /// @see <a href="https://parquet.apache.org/docs/file-format/data-pages/columnchunks/">File Format – Column Chunks</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnMetaData(
@@ -42,5 +43,6 @@ public record ColumnMetaData(
         Statistics statistics,
         GeospatialStatistics geospatialStatistics,
         Long bloomFilterOffset,
-        Integer bloomFilterLength) {
+        Integer bloomFilterLength,
+        List<PageEncodingStats> encodingStats) {
 }

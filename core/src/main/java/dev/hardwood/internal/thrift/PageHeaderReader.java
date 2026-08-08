@@ -13,6 +13,7 @@ import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.metadata.PageType;
 
 /// Reader for PageHeader from Thrift Compact Protocol.
 public class PageHeaderReader {
@@ -28,7 +29,7 @@ public class PageHeaderReader {
     }
 
     private static PageHeader readInternal(ThriftCompactReader reader) throws IOException {
-        PageHeader.PageType type = null;
+        PageType type = null;
         int uncompressedPageSize = 0;
         int compressedPageSize = 0;
         Integer crc = null;
@@ -45,7 +46,12 @@ public class PageHeaderReader {
             switch (header.fieldId()) {
                 case 1: // type
                     if (header.type() == 0x05) {
-                        type = PageHeader.PageType.fromThriftValue(reader.readI32());
+                        int rawType = reader.readI32();
+                        type = ThriftEnumLookup.pageType(rawType);
+                        // A page whose header declares a type we do not know cannot be decoded.
+                        if (type == PageType.UNKNOWN) {
+                            throw new IOException("PageHeader has unknown page type: " + rawType);
+                        }
                     }
                     else {
                         reader.skipField(header.type());

@@ -35,6 +35,7 @@ import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetFileReader;
@@ -403,7 +404,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             PageHeader header = PageHeaderReader.read(headerReader);
             int headerSize = headerReader.getBytesRead();
 
-            boolean isDictionary = header.type() == PageHeader.PageType.DICTIONARY_PAGE;
+            boolean isDictionary = header.type() == PageType.DICTIONARY_PAGE;
             String label = isDictionary ? "dict" : String.valueOf(pageIndex);
             Long firstRowIndex = null;
             Statistics inlineStats = null;
@@ -425,7 +426,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                     inlineStats
             ));
 
-            if (header.type() == PageHeader.PageType.DATA_PAGE || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
+            if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
                 valuesRead += numValues(header);
                 pageIndex++;
                 if (valuesRead >= cmd.numValues()) {
@@ -449,16 +450,17 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                 DataPageHeaderV2 dp = header.dataPageHeaderV2();
                 yield dp != null ? dp.statistics() : null;
             }
-            case DICTIONARY_PAGE, INDEX_PAGE -> null;
+            case DICTIONARY_PAGE, INDEX_PAGE, UNKNOWN -> null;
         };
     }
 
-    private static String shortType(PageHeader.PageType type) {
+    private static String shortType(PageType type) {
         return switch (type) {
             case DATA_PAGE -> "DATA";
             case DATA_PAGE_V2 -> "DATA_V2";
             case DICTIONARY_PAGE -> "DICT";
             case INDEX_PAGE -> "INDEX";
+            case UNKNOWN -> "UNKNOWN";
         };
     }
 
@@ -467,7 +469,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             case DATA_PAGE -> shortEncoding(header.dataPageHeader().encoding().name());
             case DATA_PAGE_V2 -> shortEncoding(header.dataPageHeaderV2().encoding().name());
             case DICTIONARY_PAGE -> shortEncoding(header.dictionaryPageHeader().encoding().name());
-            case INDEX_PAGE -> "N/A";
+            case INDEX_PAGE, UNKNOWN -> "N/A";
         };
     }
 
@@ -484,7 +486,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             case DATA_PAGE -> header.dataPageHeader().numValues();
             case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();
             case DICTIONARY_PAGE -> header.dictionaryPageHeader().numValues();
-            case INDEX_PAGE -> 0;
+            case INDEX_PAGE, UNKNOWN -> 0;
         };
     }
 }

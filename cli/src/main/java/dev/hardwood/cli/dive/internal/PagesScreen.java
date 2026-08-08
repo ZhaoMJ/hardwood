@@ -23,6 +23,7 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -62,7 +63,7 @@ public final class PagesScreen {
         // on a data page.
         boolean onDataPage = !headers.isEmpty()
                 && state.selection() < headers.size()
-                && headers.get(state.selection()).type() != PageHeader.PageType.DICTIONARY_PAGE;
+                && headers.get(state.selection()).type() != PageType.DICTIONARY_PAGE;
         if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
                 && !event.hasCtrl() && !event.hasAlt() && onDataPage) {
             stack.replaceTop(new ScreenState.Pages(
@@ -131,7 +132,7 @@ public final class PagesScreen {
         // anywhere (no ColumnIndex AND no inline statistics on any page). Every
         // row would be "—" otherwise, pure visual noise.
         boolean hasAnyStats = columnIndex != null || headers.stream()
-                .anyMatch(h -> h.type() != PageHeader.PageType.DICTIONARY_PAGE && inlineStats(h) != null);
+                .anyMatch(h -> h.type() != PageType.DICTIONARY_PAGE && inlineStats(h) != null);
         // Build Row objects only for the visible window — see RowWindow.
         RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
                 headers.size(), area.height() - 3);
@@ -140,7 +141,7 @@ public final class PagesScreen {
         // by counting non-dict pages in the skipped prefix.
         int dataPageIdx = 0;
         for (int i = 0; i < window.start(); i++) {
-            if (headers.get(i).type() != PageHeader.PageType.DICTIONARY_PAGE) {
+            if (headers.get(i).type() != PageType.DICTIONARY_PAGE) {
                 dataPageIdx++;
             }
         }
@@ -153,7 +154,7 @@ public final class PagesScreen {
             String nulls = "—";
             int values;
             String uncompressed = Sizes.format(h.uncompressedPageSize());
-            if (h.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+            if (h.type() == PageType.DICTIONARY_PAGE) {
                 DictionaryPageHeader dph = h.dictionaryPageHeader();
                 values = dph != null ? dph.numValues() : 0;
             }
@@ -275,7 +276,7 @@ public final class PagesScreen {
         // DICTIONARY_PAGE row.
         boolean onDataPage = count > 0
                 && state.selection() < count
-                && headers.get(state.selection()).type() != PageHeader.PageType.DICTIONARY_PAGE;
+                && headers.get(state.selection()).type() != PageType.DICTIONARY_PAGE;
         boolean hasLogical = col.logicalType() != null && onDataPage;
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
@@ -391,7 +392,7 @@ public final class PagesScreen {
         lines.add(Line.empty());
         // Dictionary pages have no inline stats — `t` is a no-op even
         // when the column carries a logical type, so suppress the hint.
-        boolean onDataPage = header.type() != PageHeader.PageType.DICTIONARY_PAGE;
+        boolean onDataPage = header.type() != PageType.DICTIONARY_PAGE;
         boolean hasLogical = col.logicalType() != null && onDataPage;
         String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
         lines.add(Line.from(new Span(hint, Theme.dim())));

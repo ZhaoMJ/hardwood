@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -39,6 +38,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -855,7 +855,7 @@ public class RowGroupIterator {
                 continue;
             }
             if (PageFormatProbe.firstDataPageType(inputFile, columnChunk)
-                    == PageHeader.PageType.DATA_PAGE_V2) {
+                    == PageType.DATA_PAGE_V2) {
                 continue;
             }
             return false;

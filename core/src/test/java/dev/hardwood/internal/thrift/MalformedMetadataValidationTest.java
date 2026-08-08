@@ -14,6 +14,7 @@ import java.nio.ByteOrder;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.metadata.PageType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,11 +66,21 @@ class MalformedMetadataValidationTest {
     }
 
     @Test
+    void unknownPageTypeRejected() {
+        // PageHeader: field1 type=4, which no released version of the format defines. Unlike
+        // encoding_stats, a page we cannot classify cannot be decoded either, so it must fail.
+        assertThatThrownBy(() -> PageHeaderReader.read(
+                reader(0x15, 0x08, 0x15, 0x14, 0x15, 0x10, 0x00)))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("unknown page type: 4");
+    }
+
+    @Test
     void validPageHeaderStillParses() {
         // PageHeader: field1 type=DATA_PAGE(0), field2 uncompressed=10, field3 compressed=8
         PageHeader header = assertDoesNotThrow(() -> PageHeaderReader.read(
                 reader(0x15, 0x00, 0x15, 0x14, 0x15, 0x10, 0x00)));
-        assertThat(header.type()).isEqualTo(PageHeader.PageType.DATA_PAGE);
+        assertThat(header.type()).isEqualTo(PageType.DATA_PAGE);
         assertThat(header.uncompressedPageSize()).isEqualTo(10);
         assertThat(header.compressedPageSize()).isEqualTo(8);
     }

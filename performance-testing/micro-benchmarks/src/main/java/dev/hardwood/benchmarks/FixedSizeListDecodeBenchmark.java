@@ -41,6 +41,7 @@ import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
@@ -211,7 +212,7 @@ public class FixedSizeListDecodeBenchmark {
                         }
                         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
                         PageHeader header = PageHeaderReader.read(headerReader);
-                        if (header.type() != PageHeader.PageType.DATA_PAGE_V2) {
+                        if (header.type() != PageType.DATA_PAGE_V2) {
                             continue;
                         }
                         ByteBuffer body = pageBuffer.slice(headerReader.getBytesRead(), header.compressedPageSize());
