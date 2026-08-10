@@ -22,12 +22,13 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
-import dev.hardwood.internal.predicate.StatsDecision;
+import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -90,7 +91,7 @@ public class RowGroupIterator {
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
     private boolean filterSatisfiedByStatistics;
-    private boolean statisticsFilteringEnabled = true;
+    private boolean metadataFilteringEnabled = true;
 
     /// AND-necessary leaves per column index, derived once from `filterPredicate`.
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
@@ -265,15 +266,16 @@ public class RowGroupIterator {
     ///
     /// @param projection column projection
     /// @param filter resolved predicate, or `null` for no filtering
-    /// @param statisticsFilteringEnabled when `false`, the filter takes no
-    ///        metadata-derived shortcut — no row-group statistics/bloom pruning,
-    ///        no page-index or inline-page-statistics skipping, no always-match
-    ///        decision — so the predicate is evaluated against every decoded row
+    /// @param metadataFilteringEnabled when `false`, the filter takes no
+    ///        metadata-derived shortcut — no row-group pruning from statistics,
+    ///        bloom filters or dictionaries, no page-index or
+    ///        inline-page-statistics skipping, no always-match decision — so the
+    ///        predicate is evaluated against every decoded row
     /// @return the projected schema
     public ProjectedSchema initialize(ColumnProjection projection, ResolvedPredicate filter,
-                                      boolean statisticsFilteringEnabled) {
+                                      boolean metadataFilteringEnabled) {
         return initialize(ProjectedSchema.create(referenceSchema, projection), filter,
-                statisticsFilteringEnabled);
+                metadataFilteringEnabled);
     }
 
     /// Applies a pre-built projected schema and optional filter, builds the full work list.
@@ -290,19 +292,19 @@ public class RowGroupIterator {
     ///
     /// @param projected pre-built projected schema
     /// @param filter resolved predicate, or `null` for no filtering
-    /// @param statisticsFilteringEnabled when `false`, the filter takes no
+    /// @param metadataFilteringEnabled when `false`, the filter takes no
     ///        metadata-derived shortcut, so the predicate is evaluated against
     ///        every decoded row (see the sibling three-arg overload)
     /// @return the projected schema (same as input)
     public ProjectedSchema initialize(ProjectedSchema projected, ResolvedPredicate filter,
-                                      boolean statisticsFilteringEnabled) {
+                                      boolean metadataFilteringEnabled) {
         if (referenceSchema == null) {
             throw new IllegalStateException("openFirst() must be called before initialize()");
         }
-        this.statisticsFilteringEnabled = statisticsFilteringEnabled;
+        this.metadataFilteringEnabled = metadataFilteringEnabled;
         this.projectedSchema = projected;
         this.filterPredicate = filter;
-        this.dropLeavesByColumn = filter != null && statisticsFilteringEnabled
+        this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
                 ? PageDropPredicates.byColumn(filter) : Map.of();
 
         buildWorkList();
@@ -350,7 +352,7 @@ public class RowGroupIterator {
         return metadataCache.computeIfAbsent(workItem.workItemIndex(), idx -> {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
-                boolean pageFiltering = filterPredicate != null && statisticsFilteringEnabled;
+                boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
                         workItem.inputFile(), workItem.rowGroup(),
                         pageFiltering);
@@ -736,14 +738,16 @@ public class RowGroupIterator {
     private static List<PageGroup> coalescePages(List<NeededPage> neededPages,
                                                   ColumnChunk columnChunk,
                                                   long firstDataPageOffset) {
-        // Determine dictionary prefix (explicit or implicit)
+        // Determine the dictionary prefix. `dictionary_page_offset` is optional in parquet.thrift
+        // and its absence is ordinary — parquet-mr 1.12 omits it (alltypes_tiny_pages.parquet in
+        // apache/parquet-testing), as did Trino before 427. The dictionary page is then the chunk's
+        // first page.
         Long dictOffset = columnChunk.metaData().dictionaryPageOffset();
         long dictStart;
         if (dictOffset != null && dictOffset > 0 && dictOffset < firstDataPageOffset) {
             dictStart = dictOffset;
         }
         else if (firstDataPageOffset > columnChunk.metaData().dataPageOffset()) {
-            // Implicit dictionary: writers that omit dictionaryPageOffset
             dictStart = columnChunk.metaData().dataPageOffset();
         }
         else {
@@ -938,7 +942,7 @@ public class RowGroupIterator {
         boolean allKeptAlwaysMatch = true;
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
             PreparedFile prepared = getPreparedFile(fileIndex);
-            List<FilteredRowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile);
+            List<FilteredRowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile, prepared.schema);
 
             for (int rgIndex = 0; rgIndex < rowGroups.size() && rowBudget > 0; rgIndex++) {
                 FilteredRowGroup decided = rowGroups.get(rgIndex);
@@ -1082,8 +1086,12 @@ public class RowGroupIterator {
     /// every row matches (so per-row filtering can be skipped for it).
     private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches) {}
 
-    private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile) {
-        if (filterPredicate == null || !statisticsFilteringEnabled) {
+    private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
+                                                   FileSchema fileSchema) {
+        // The metadata-filtering opt-out (#797) disables every metadata-driven prune,
+        // dictionary membership included — with it off, no row group is dropped without
+        // reading rows.
+        if (filterPredicate == null || !metadataFilteringEnabled) {
             return rowGroups.stream()
                     .map(rg -> new FilteredRowGroup(rg, false))
                     .toList();
@@ -1091,12 +1099,13 @@ public class RowGroupIterator {
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
         for (RowGroup rg : rowGroups) {
-            StatsDecision decision = RowGroupFilterEvaluator.decideRowGroup(filterPredicate, rg,
-                    new RowGroupBloomFilterSource(inputFile, rg));
-            if (decision == StatsDecision.CANNOT_MATCH) {
+            FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(filterPredicate, rg,
+                    new RowGroupBloomFilterSource(inputFile, rg),
+                    new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context));
+            if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }
-            boolean alwaysMatches = decision == StatsDecision.ALWAYS_MATCHES;
+            boolean alwaysMatches = decision == FilterDecision.ALWAYS_MATCHES;
             if (alwaysMatches) {
                 fullyMatching++;
             }
