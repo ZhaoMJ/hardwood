@@ -871,7 +871,7 @@ class AvroRowReaderTest {
     void enumValuesMaterializeAsStringsAtEveryNestingPosition() throws Exception {
         // enum_nested_test.parquet: ENUM values occur at the top level, inside a
         // struct, as list elements, and as map values. Avro maps ENUM to string,
-        // so every non-null materialized value must be a String and serialize.
+        // so every non-null materialized value must be a String.
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("enum_nested_test.parquet")));
              AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
@@ -912,6 +912,17 @@ class AvroRowReaderTest {
             assertThat(thirdMeta.get("kind")).isNull();
             assertThat(((List<?>) records.get(2).get("tags")).get(0)).isNull();
             assertThat(((Map<?, ?>) records.get(2).get("labels")).get("d")).isNull();
+        }
+    }
+
+    @Test
+    void enumListRecordsSerializeWithGeneratedSchema() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("enum_nested_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema schema = reader.getSchema();
+            List<GenericRecord> records = readAll(reader);
 
             assertThatCode(() -> serialize(schema, records)).doesNotThrowAnyException();
         }
