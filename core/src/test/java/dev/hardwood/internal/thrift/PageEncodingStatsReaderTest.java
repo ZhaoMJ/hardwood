@@ -195,4 +195,19 @@ class PageEncodingStatsReaderTest {
         assertThat(metaData.encodingStats()).isEmpty();
         assertThat(metaData.bloomFilterOffset()).isEqualTo(8L);
     }
+
+    @Test
+    void boolListElementTypeDoesNotDisturbLaterFields() throws IOException {
+        // The same shape with element type bool (0x01), whose elements are a bare byte each
+        // rather than a value carried in a field header. Skipping them by field rules would
+        // consume none of the two element bytes and read them as the next field header.
+        ColumnMetaData metaData = ColumnMetaDataReader.read(reader(
+                ENCODING_STATS_FIELD, 0x21,
+                0x01, 0x02,
+                0x16, 0x10,
+                0x00));
+
+        assertThat(metaData.encodingStats()).isEmpty();
+        assertThat(metaData.bloomFilterOffset()).isEqualTo(8L);
+    }
 }

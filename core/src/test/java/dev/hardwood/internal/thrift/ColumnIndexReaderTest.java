@@ -119,6 +119,51 @@ class ColumnIndexReaderTest {
         assertThat(index.nanCounts()).containsExactly(11L);
     }
 
+    @Test
+    void skipsBoolElementsAtHistogramFieldWithoutDesync() throws IOException {
+        // A bool element is one byte on the wire, unlike a bool field, whose value rides in
+        // its header's type nibble. Skipping these by field rules would consume nothing and
+        // leave the cursor on the first element, losing fields 7 and 8 as well.
+        byte[] thrift = struct()
+                .field(1, TYPE_LIST).boolList(false, false)
+                .field(2, TYPE_LIST).binaryList(bytes(1), bytes(2))
+                .field(3, TYPE_LIST).binaryList(bytes(9), bytes(9))
+                .field(4, TYPE_I32).i32(0)
+                .field(6, TYPE_LIST).boolList(true, false, true)
+                .field(7, TYPE_LIST).i64List(3, 9)
+                .field(8, TYPE_LIST).i64List(11, 12)
+                .stop().build();
+
+        ColumnIndex index = ColumnIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
+
+        assertThat(index.repetitionLevelHistograms()).isNull();
+        assertThat(index.definitionLevelHistograms()).containsExactly(3L, 9L);
+        assertThat(index.nanCounts()).containsExactly(11L, 12L);
+    }
+
+    @Test
+    void skipsBoolElementsAtNullCountsFieldWithoutDesync() throws IOException {
+        // The same shape one field earlier, where the desync reaches three later fields
+        // rather than two.
+        byte[] thrift = struct()
+                .field(1, TYPE_LIST).boolList(false, false)
+                .field(2, TYPE_LIST).binaryList(bytes(1), bytes(2))
+                .field(3, TYPE_LIST).binaryList(bytes(9), bytes(9))
+                .field(4, TYPE_I32).i32(0)
+                .field(5, TYPE_LIST).boolList(true, false)
+                .field(6, TYPE_LIST).i64List(2, 2)
+                .field(7, TYPE_LIST).i64List(1, 3)
+                .field(8, TYPE_LIST).i64List(0, 0)
+                .stop().build();
+
+        ColumnIndex index = ColumnIndexReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
+
+        assertThat(index.nullCounts()).isNull();
+        assertThat(index.repetitionLevelHistograms()).containsExactly(2L, 2L);
+        assertThat(index.definitionLevelHistograms()).containsExactly(1L, 3L);
+        assertThat(index.nanCounts()).containsExactly(0L, 0L);
+    }
+
     private static ThriftStructBuilder struct() {
         return new ThriftStructBuilder();
     }

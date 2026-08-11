@@ -89,6 +89,24 @@ class OffsetIndexReaderTest {
         assertThat(index.pageLocations()).hasSize(1);
     }
 
+    @Test
+    void skipsBoolElementsAtUnencodedSizesFieldWithoutDesync() throws IOException {
+        // A bool element is a bare byte, unlike a bool field whose value rides in its
+        // header's type nibble. Skipping these by field rules would consume none of them
+        // and read the first element byte as the next field header.
+        byte[] thrift = struct()
+                .field(1, TYPE_LIST).structList(pageLocation(100, 40, 0))
+                .field(2, TYPE_LIST).boolList(true, false, true)
+                .field(3, TYPE_I64).i64(7)
+                .stop().build();
+
+        OffsetIndex index = read(thrift);
+
+        assertThat(index.unencodedByteArrayDataBytes()).isNull();
+        assertThat(index.pageLocations()).hasSize(1);
+        assertThat(index.pageLocations().get(0).offset()).isEqualTo(100L);
+    }
+
     /// A `PageLocation` struct body: offset, compressed_page_size, first_row_index.
     private static byte[] pageLocation(long offset, int compressedPageSize, long firstRowIndex) {
         return struct()

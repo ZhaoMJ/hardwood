@@ -39,9 +39,7 @@ class PageEncodingStatsReader {
         // bytes misread as field headers. Skipping by the declared element type consumes it
         // without that risk.
         if (listHeader.elementType() != Codes.STRUCT) {
-            for (int i = 0; i < listHeader.size(); i++) {
-                reader.skipField(listHeader.elementType());
-            }
+            reader.skipElements(listHeader);
             LOG.log(System.Logger.Level.WARNING,
                     "Ignoring ColumnMetaData.encoding_stats: wrong Thrift element type 0x"
                             + Integer.toHexString(listHeader.elementType() & 0xFF) + " (expected struct)");

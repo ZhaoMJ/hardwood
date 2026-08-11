@@ -253,9 +253,7 @@ public class ThriftCompactReader {
     public List<Long> readI64List() throws IOException {
         CollectionHeader listHeader = readListHeader();
         if (listHeader.elementType() != TYPE_I64) {
-            for (int i = 0; i < listHeader.size(); i++) {
-                skipField(listHeader.elementType());
-            }
+            skipElements(listHeader);
             return null;
         }
         List<Long> values = new ArrayList<>(listHeader.size());
@@ -265,7 +263,36 @@ public class ThriftCompactReader {
         return values;
     }
 
+    /// Skip every element of a list, set or map whose header has just been read.
+    public void skipElements(CollectionHeader header) throws IOException {
+        for (int i = 0; i < header.size(); i++) {
+            skipElement(header.elementType());
+        }
+    }
+
+    /// Skip one element of a list, set or map.
+    ///
+    /// This is [#skipField] for every type but `bool`, which is encoded differently in the two
+    /// positions: a `bool` **field** carries its value in the type nibble of its own header and
+    /// has no payload, while a `bool` **element** has no header and occupies one byte on the
+    /// wire. Skipping a `list<bool>` with [#skipField] would therefore consume none of it and
+    /// leave the cursor on the first element, desynchronising every field that follows.
+    ///
+    /// The element type nibble carries `0x01` or `0x02` for `bool` depending on the writer, so
+    /// both are accepted. The byte is consumed without validating it as a boolean: a skip path
+    /// should not fail a read that the reader is choosing not to interpret.
+    public void skipElement(byte elementType) throws IOException {
+        if (elementType == TYPE_BOOLEAN_TRUE || elementType == TYPE_BOOLEAN_FALSE) {
+            readByte();
+            return;
+        }
+        skipField(elementType);
+    }
+
     /// Skip a field of the given type.
+    ///
+    /// Elements of a collection are skipped through [#skipElement], not through a recursive
+    /// call to this method — see there for why the two differ.
     public void skipField(byte type) throws IOException {
         switch (type) {
             case TYPE_BOOLEAN_TRUE:
@@ -288,10 +315,7 @@ public class ThriftCompactReader {
                 break;
             case TYPE_LIST:
             case TYPE_SET:
-                CollectionHeader listHeader = readListHeader();
-                for (int i = 0; i < listHeader.size(); i++) {
-                    skipField(listHeader.elementType());
-                }
+                skipElements(readListHeader());
                 break;
             case TYPE_MAP:
                 int mapSize = (int) readVarint();
@@ -300,8 +324,8 @@ public class ThriftCompactReader {
                     byte keyType = (byte) ((kvTypes >> 4) & 0x0F);
                     byte valueType = (byte) (kvTypes & 0x0F);
                     for (int i = 0; i < mapSize; i++) {
-                        skipField(keyType);
-                        skipField(valueType);
+                        skipElement(keyType);
+                        skipElement(valueType);
                     }
                 }
                 break;

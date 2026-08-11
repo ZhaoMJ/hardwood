@@ -213,6 +213,42 @@ class ThriftCompactReaderTest {
         assertThat(header.elementType()).isEqualTo((byte) 0x01);
     }
 
+    /// A `bool` is the one type encoded differently as a collection element than as a struct
+    /// field: the field form carries its value in the type nibble of its header and has no
+    /// payload, the element form is a bare byte. Skipping a `list<bool>` by field rules consumes
+    /// nothing, so the cursor stays on the first element and every field after the list is read
+    /// out of a shifted stream.
+    @Test
+    void skipFieldConsumesBooleanListElements() throws IOException {
+        // List header: 3 elements, element type bool (0x01), then three value bytes.
+        ThriftCompactReader reader = reader(0x31, 0x01, 0x02, 0x01, 0xFF);
+
+        reader.skipField((byte) 0x09); // TYPE_LIST
+
+        assertThat(reader.getBytesRead()).isEqualTo(4);
+    }
+
+    /// `0x02` is the other type code a writer may put in the element nibble for `bool`.
+    @Test
+    void skipFieldConsumesBooleanListElementsDeclaredAsFalse() throws IOException {
+        ThriftCompactReader reader = reader(0x22, 0x02, 0x02, 0xFF);
+
+        reader.skipField((byte) 0x09); // TYPE_LIST
+
+        assertThat(reader.getBytesRead()).isEqualTo(3);
+    }
+
+    /// Map keys and values are elements too, so they follow the element encoding.
+    @Test
+    void skipFieldConsumesBooleanMapEntries() throws IOException {
+        // MAP size = 2, key/value types packed: bool (0x01) << 4 | bool (0x01) = 0x11.
+        ThriftCompactReader reader = reader(0x02, 0x11, 0x01, 0x02, 0x02, 0x01, 0xFF);
+
+        reader.skipField((byte) 0x0B); // TYPE_MAP
+
+        assertThat(reader.getBytesRead()).isEqualTo(6);
+    }
+
     private static ThriftCompactReader reader(int... bytes) {
         byte[] b = new byte[bytes.length];
         for (int i = 0; i < bytes.length; i++) {
