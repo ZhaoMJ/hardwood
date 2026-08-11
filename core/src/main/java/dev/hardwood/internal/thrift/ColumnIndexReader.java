@@ -45,10 +45,10 @@ public class ColumnIndexReader {
         List<byte[]> minValues = new ArrayList<>();
         List<byte[]> maxValues = new ArrayList<>();
         ColumnIndex.BoundaryOrder boundaryOrder = ColumnIndex.BoundaryOrder.UNORDERED;
-        List<Long> nullCounts = null;
-        List<Long> repetitionLevelHistograms = null;
-        List<Long> definitionLevelHistograms = null;
-        List<Long> nanCounts = null;
+        long[] nullCounts = null;
+        long[] repetitionLevelHistograms = null;
+        long[] definitionLevelHistograms = null;
+        long[] nanCounts = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -105,7 +105,7 @@ public class ColumnIndexReader {
                     break;
                 case 5: // null_counts (list<i64>, optional)
                     if (header.type() == 0x09) { // LIST
-                        nullCounts = reader.readI64List();
+                        nullCounts = reader.readI64Array();
                     }
                     else {
                         reader.skipField(header.type());
@@ -113,7 +113,7 @@ public class ColumnIndexReader {
                     break;
                 case 6: // repetition_level_histograms (list<i64>, optional)
                     if (header.type() == 0x09) { // LIST
-                        repetitionLevelHistograms = reader.readI64List();
+                        repetitionLevelHistograms = reader.readI64Array();
                     }
                     else {
                         reader.skipField(header.type());
@@ -121,7 +121,7 @@ public class ColumnIndexReader {
                     break;
                 case 7: // definition_level_histograms (list<i64>, optional)
                     if (header.type() == 0x09) { // LIST
-                        definitionLevelHistograms = reader.readI64List();
+                        definitionLevelHistograms = reader.readI64Array();
                     }
                     else {
                         reader.skipField(header.type());
@@ -129,7 +129,7 @@ public class ColumnIndexReader {
                     break;
                 case 8: // nan_counts (list<i64>, optional)
                     if (header.type() == 0x09) { // LIST
-                        nanCounts = reader.readI64List();
+                        nanCounts = reader.readI64Array();
                     }
                     else {
                         reader.skipField(header.type());

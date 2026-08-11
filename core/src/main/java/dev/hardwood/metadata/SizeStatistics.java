@@ -7,8 +7,6 @@
  */
 package dev.hardwood.metadata;
 
-import java.util.List;
-
 /// Size statistics for a column chunk: the unencoded size of its `BYTE_ARRAY` data
 /// and its repetition- and definition-level histograms.
 ///
@@ -17,7 +15,9 @@ import java.util.List;
 /// empty-list counts of a chunk without decoding its level streams.
 ///
 /// Every field is optional in the Parquet format. A writer that omits one is
-/// reported as `null`, which is distinct from a present but empty histogram.
+/// reported as `null`, which is distinct from a present but empty histogram. The
+/// histograms are the values as the file recorded them and are not copied on the way
+/// in or out.
 ///
 /// @param unencodedByteArrayDataBytes total unencoded size of the `BYTE_ARRAY` data in this chunk, or `null` if absent
 /// @param repetitionLevelHistogram number of values at each repetition level `0..maxRepetitionLevel`, or `null` if absent
@@ -25,6 +25,6 @@ import java.util.List;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record SizeStatistics(
         Long unencodedByteArrayDataBytes,
-        List<Long> repetitionLevelHistogram,
-        List<Long> definitionLevelHistogram) {
+        long[] repetitionLevelHistogram,
+        long[] definitionLevelHistogram) {
 }

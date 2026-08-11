@@ -318,8 +318,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         }
         long nullCount = -1;
         String nulls = "-";
-        if (ci.nullCounts() != null && dataPageCounter < ci.nullCounts().size()) {
-            nullCount = ci.nullCounts().get(dataPageCounter);
+        if (ci.nullCounts() != null && dataPageCounter < ci.nullCounts().length) {
+            nullCount = ci.nullCounts()[dataPageCounter];
             nulls = String.valueOf(nullCount);
         }
         return new IndexCells(firstRow, min, max, nulls, nullCount);

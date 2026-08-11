@@ -124,7 +124,7 @@ All fields (page_type, encoding, count) ❌ — struct not read.
 | id | field | status | notes |
 |----|-------|--------|-------|
 | 1 | unencoded_byte_array_data_bytes | 🟡 | on public record, no functional consumer |
-| 2 | repetition_level_histogram | 🟡 | absent and empty are distinguished (`null` vs empty list) |
+| 2 | repetition_level_histogram | 🟡 | absent and empty are distinguished (`null` vs empty array) |
 | 3 | definition_level_histogram | 🟡 | |
 
 ### GeospatialStatistics

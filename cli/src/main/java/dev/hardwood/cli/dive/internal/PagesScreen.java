@@ -168,8 +168,8 @@ public final class PagesScreen {
                     min = formatStat(columnIndex.minValues().get(dataPageIdx), col, state.logicalTypes());
                     max = formatStat(columnIndex.maxValues().get(dataPageIdx), col, state.logicalTypes());
                     if (columnIndex.nullCounts() != null
-                            && dataPageIdx < columnIndex.nullCounts().size()) {
-                        nulls = Fmt.fmt("%,d", columnIndex.nullCounts().get(dataPageIdx));
+                            && dataPageIdx < columnIndex.nullCounts().length) {
+                        nulls = Fmt.fmt("%,d", columnIndex.nullCounts()[dataPageIdx]);
                     }
                 }
                 else {

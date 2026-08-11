@@ -34,7 +34,7 @@ public class OffsetIndexReader {
 
     private static OffsetIndex readInternal(ThriftCompactReader reader) throws IOException {
         List<PageLocation> pageLocations = new ArrayList<>();
-        List<Long> unencodedByteArrayDataBytes = null;
+        long[] unencodedByteArrayDataBytes = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -56,7 +56,7 @@ public class OffsetIndexReader {
                     break;
                 case 2: // unencoded_byte_array_data_bytes (list<i64>, optional)
                     if (header.type() == 0x09) { // LIST
-                        unencodedByteArrayDataBytes = reader.readI64List();
+                        unencodedByteArrayDataBytes = reader.readI64Array();
                     }
                     else {
                         reader.skipField(header.type());

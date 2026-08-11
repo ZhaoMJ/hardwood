@@ -190,8 +190,8 @@ public final class ColumnIndexScreen {
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             int idx = filtered.get(i);
-            String nulls = ci.nullCounts() != null && idx < ci.nullCounts().size()
-                    ? Fmt.fmt("%,d", ci.nullCounts().get(idx))
+            String nulls = ci.nullCounts() != null && idx < ci.nullCounts().length
+                    ? Fmt.fmt("%,d", ci.nullCounts()[idx])
                     : "—";
             rows.add(Row.from(
                     String.valueOf(idx),

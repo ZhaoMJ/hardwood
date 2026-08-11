@@ -46,11 +46,16 @@ No read path consults the new fields, so no file reads differently than it did b
 ### The `SizeStatistics` record
 
 A public record in `dev.hardwood.metadata` mirroring the Thrift struct: a nullable
-`Long unencodedByteArrayDataBytes` and two nullable `List<Long>` histograms.
+`Long unencodedByteArrayDataBytes` and two nullable `long[]` histograms.
 
-Every field is optional in the format and surfaces as `null` when absent, following
-`ColumnIndex.nullCounts` — the existing optional `list<i64>`. Absent must stay distinct
-from present-but-empty, and not only in principle: PyArrow records the
+A histogram is a small dense run of counts, so it is carried as a primitive array rather
+than a `List<Long>`: boxing a per-page histogram costs one object per level per page, and
+nothing in the record's contract needs `List`. `ColumnIndex.nullCounts` moves to `long[]`
+with them, so a `ColumnIndex` presents its four per-page count arrays the same way. The
+arrays are not copied on the way in or out.
+
+Every field is optional in the format and surfaces as `null` when absent. Absent must stay
+distinct from present-but-empty, and not only in principle: PyArrow records the
 repetition-level histogram of a non-repeated column as **present but empty** in
 `SizeStatistics` and as **absent** in the `ColumnIndex` for that same column. The same
 rule governs `nanCount`, where the distinction carries a conclusion — only a recorded
@@ -71,9 +76,10 @@ not reference.
 
 `ColumnMetaData` gains `sizeStatistics`; `Statistics` gains `nanCount`; `ColumnIndex`
 gains the two histograms and `nanCounts`; `OffsetIndex` gains
-`unencodedByteArrayDataBytes`. Each is appended, leaving existing positional prefixes
-unchanged, and each changes its record's canonical constructor — binary-incompatible
-additions to `dev.hardwood.metadata`, reported by japicmp.
+`unencodedByteArrayDataBytes`. Each is appended, and each changes its record's canonical
+constructor — binary-incompatible additions to `dev.hardwood.metadata`, reported by
+japicmp. `ColumnIndex.nullCounts` changes type in the same pass, which japicmp reports
+alongside them.
 
 `ColumnMetaData` is reachable from public API through `FileMetaData` → `RowGroup` →
 `ColumnChunk`. `ColumnIndex` and `OffsetIndex` are public records with no public reader

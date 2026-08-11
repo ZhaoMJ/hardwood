@@ -154,13 +154,13 @@ public class PageFilterEvaluator {
         List<PageLocation> pages = offsetIdx.pageLocations();
         int pageCount = pages.size();
         boolean[] keep = new boolean[pageCount];
-        List<Long> nullCounts = columnIdx.nullCounts();
+        long[] nullCounts = columnIdx.nullCounts();
 
         for (int i = 0; i < pageCount; i++) {
             if (seekingNulls) {
                 // IS NULL: keep page if it might contain nulls
                 // Drop page only if we KNOW it has no nulls (nullCounts[i] == 0)
-                if (nullCounts != null && nullCounts.get(i) != null && nullCounts.get(i) == 0) {
+                if (nullCounts != null && nullCounts[i] == 0) {
                     keep[i] = false;
                 }
                 else {

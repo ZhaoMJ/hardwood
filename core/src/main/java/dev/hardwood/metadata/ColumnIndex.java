@@ -11,10 +11,14 @@ import java.util.List;
 
 /// Column index for a column chunk, providing per-page min/max statistics for page-level filtering.
 ///
-/// The level histograms hold one histogram per page, concatenated into a single list in
+/// The level histograms hold one histogram per page, concatenated into a single array in
 /// page order: with `maxLevel + 1` entries per page, page `p` occupies the range from
 /// `p * (maxLevel + 1)` up to `(p + 1) * (maxLevel + 1)`. The stride comes from the
 /// column's schema, which this record does not carry.
+///
+/// The per-page count arrays are the values as the file recorded them and are not copied
+/// on the way in or out. An absent array is `null`, which stays distinct from a
+/// zero-length one the writer recorded as empty.
 ///
 /// @param nullPages boolean list indicating which pages contain only null values
 /// @param minValues per-page minimum values in the column's physical sort order
@@ -35,10 +39,10 @@ public record ColumnIndex(
         List<byte[]> minValues,
         List<byte[]> maxValues,
         BoundaryOrder boundaryOrder,
-        List<Long> nullCounts,
-        List<Long> repetitionLevelHistograms,
-        List<Long> definitionLevelHistograms,
-        List<Long> nanCounts) {
+        long[] nullCounts,
+        long[] repetitionLevelHistograms,
+        long[] definitionLevelHistograms,
+        long[] nanCounts) {
 
     /// Ordering of min/max values across pages.
     public enum BoundaryOrder {

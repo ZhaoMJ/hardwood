@@ -102,8 +102,8 @@ Every field is optional. A writer that omits one reports `null`, which is distin
 ```java
 SizeStatistics sizeStats = col.sizeStatistics();
 if (sizeStats != null && sizeStats.definitionLevelHistogram() != null) {
-    List<Long> histogram = sizeStats.definitionLevelHistogram();
-    long nonNull = histogram.get(histogram.size() - 1);
+    long[] histogram = sizeStats.definitionLevelHistogram();
+    long nonNull = histogram[histogram.length - 1];
     System.out.println("    non-null values: " + nonNull);
 }
 ```
