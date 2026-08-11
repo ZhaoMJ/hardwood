@@ -572,10 +572,28 @@ class WriterRoundTripTest {
             writer.writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        byte[] file = out.toByteArray();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+
+            // The index stream is more than its bit-width byte: a zero-bit run still carries
+            // its header, without which parquet-java and Arrow C++ read past the end (#901).
+            // Hardwood's own decoder short-circuits on the bit width, so the round trip above
+            // passes either way.
+            assertThat(indexStreamLength(file, columnMeta(reader, 0).dataPageOffset())).isPositive();
         }
+    }
+
+    /// Length in bytes of the RLE index stream of the first data page at `dataPageOffset`,
+    /// which for an unlevelled `RLE_DICTIONARY` page is the uncompressed body past its leading
+    /// bit-width byte. Taken from the page header, so the chunk's codec does not matter.
+    private static int indexStreamLength(byte[] file, long dataPageOffset) throws Exception {
+        ThriftCompactReader reader = new ThriftCompactReader(ByteBuffer.wrap(file),
+                Math.toIntExact(dataPageOffset));
+        PageHeader header = PageHeaderReader.read(reader);
+        assertThat(header.dataPageHeader().encoding()).isEqualTo(Encoding.RLE_DICTIONARY);
+        return header.uncompressedPageSize() - 1;
     }
 
     @Test
