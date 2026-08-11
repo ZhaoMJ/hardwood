@@ -94,8 +94,8 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 `ColumnMetaData.sizeStatistics()` reports how much data a column chunk holds, without reading any of it:
 
 - `unencodedByteArrayDataBytes()` — the size the chunk's `BYTE_ARRAY` values would occupy unencoded and uncompressed, which the on-disk sizes do not tell you
-- `definitionLevelHistogram()` — how many values sit at each definition level, `0` through the column's maximum. The entry at the maximum counts the non-null values; the rest account for the nulls, by the depth at which each becomes null
-- `repetitionLevelHistogram()` — the same by repetition level. Entry `0` counts the values that start a new row, so for a repeated column it gives the number of list elements per row without decoding the level stream
+- `definitionLevelHistogram()` — how many values sit at each definition level, `0` through the column's maximum. The entry at the maximum counts the non-null values; each lower entry counts the values that stop being present at that level — a null, or, on a repeated column, an empty list
+- `repetitionLevelHistogram()` — how many values sit at each repetition level, `0` through the column's maximum. Entry `0` counts the values that start a new row, so it is the number of rows in the chunk; each higher entry counts the values that continue a repeated field at that level
 
 Every field is optional. A writer that omits one reports `null`, which is distinct from a value the writer recorded as empty or zero:
 

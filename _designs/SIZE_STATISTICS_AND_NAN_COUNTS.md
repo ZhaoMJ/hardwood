@@ -97,10 +97,15 @@ element-wise when it is anything else. A `list<struct>` at a histogram field is 
 found in the wild by #608; decoding those bytes as varints leaves the cursor mid-struct
 and silently corrupts every field that follows.
 
-`readListHeader` does not bound the element count it returns, so a malformed size varint
-presizes an `ArrayList` to an arbitrary capacity. The new list fields inherit that exposure
-from the existing `nullCounts` and `page_locations` cases rather than adding a new one;
-bounding it belongs to a separate change across all list-valued metadata fields.
+Elements are skipped through `skipElement`, which differs from `skipField` for exactly one
+type. A `bool` field carries its value in the type nibble of its own header and has no
+payload; a `bool` element has no header and is a bare byte. Skipping a `list<bool>` by
+field rules would consume none of it and leave the cursor on the first element, which is
+the desync the element-type check exists to prevent.
+
+`readListHeader` rejects a long-form element count larger than the bytes left in the
+buffer, so an `ArrayList` presized from it is bounded by the footer's own length. The new
+list fields inherit that bound from the existing `nullCounts` and `page_locations` cases.
 
 ## Testing
 

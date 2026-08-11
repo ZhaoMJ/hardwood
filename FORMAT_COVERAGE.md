@@ -116,8 +116,8 @@ All fields (page_type, encoding, count) ❌ — struct not read.
 | 4 | distinct_count | 🟡 | on public record, no functional consumer (#483) |
 | 5 | max_value | ✅ | preferred |
 | 6 | min_value | ✅ | preferred |
-| 7 | is_max_value_exact | ❌ | truncated-bound flag ignored; #483 |
-| 8 | is_min_value_exact | ❌ | #483 |
+| 7 | is_max_value_exact | 🟡 | on public record and round-tripped by the writer; no filtering consumer (#483) |
+| 8 | is_min_value_exact | 🟡 | #483 |
 | 9 | nan_count | 🟡 | on public record; the FP always-matches gap it unblocks is #795 |
 
 ### SizeStatistics
@@ -229,7 +229,7 @@ The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
 - **Bloom-filter writing** — filter *serialization* is not implemented (ROADMAP 9.3). The read path (#669) and `eq`/`in` pushdown (#105) are done.
 - **Size statistics & level histograms** — parsed and exposed; no functional consumer yet.
-- **Statistics completeness** — distinct_count and nan_count parsed but unconsumed; exactness flags still unread (#483).
+- **Statistics completeness** — distinct_count, nan_count and the exactness flags are parsed but drive no filtering (#483).
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.
 - **Column orders** — float total-order vs type-defined; #483.
 - **Deprecated / niche** — split-file `file_path`, index pages, encoding_stats, row-group ordinals: no planned support.
