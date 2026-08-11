@@ -7,14 +7,16 @@
  */
 package dev.hardwood.metadata;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 /// Column index for a column chunk, providing per-page min/max statistics for page-level filtering.
 ///
 /// The level histograms hold one histogram per page, concatenated into a single array in
 /// page order: with `maxLevel + 1` entries per page, page `p` occupies the range from
-/// `p * (maxLevel + 1)` up to `(p + 1) * (maxLevel + 1)`. The stride comes from the
-/// column's schema, which this record does not carry.
+/// `p * (maxLevel + 1)` up to `(p + 1) * (maxLevel + 1)`.
+/// [#repetitionLevelHistogram(int)] and [#definitionLevelHistogram(int)] slice one page out.
 ///
 /// The per-page count arrays are the values as the file recorded them and are not copied
 /// on the way in or out. An absent array is `null`, which stays distinct from a
@@ -54,5 +56,48 @@ public record ColumnIndex(
     /// Returns the number of pages described by this index.
     public int getPageCount() {
         return nullPages.size();
+    }
+
+    /// Returns one page's slice of [#repetitionLevelHistograms()], or `null` if the file
+    /// records no repetition-level histogram for this chunk.
+    ///
+    /// @param pageIndex page to slice, in `[0, getPageCount())`
+    /// @throws IndexOutOfBoundsException if `pageIndex` is outside that range
+    /// @throws IllegalStateException if the histogram's length is not a whole number of
+    ///     pages, so no per-page stride describes it
+    public long[] repetitionLevelHistogram(int pageIndex) {
+        return pageSlice(repetitionLevelHistograms, pageIndex, "repetition");
+    }
+
+    /// Returns one page's slice of [#definitionLevelHistograms()], or `null` if the file
+    /// records no definition-level histogram for this chunk.
+    ///
+    /// @param pageIndex page to slice, in `[0, getPageCount())`
+    /// @throws IndexOutOfBoundsException if `pageIndex` is outside that range
+    /// @throws IllegalStateException if the histogram's length is not a whole number of
+    ///     pages, so no per-page stride describes it
+    public long[] definitionLevelHistogram(int pageIndex) {
+        return pageSlice(definitionLevelHistograms, pageIndex, "definition");
+    }
+
+    /// The per-page stride is `histograms.length / getPageCount()`: the concatenation holds
+    /// `maxLevel + 1` entries for each of `getPageCount()` pages, so the column's maximum
+    /// level follows from the two lengths and no schema reference is needed.
+    ///
+    /// The returned slice is a copy, unlike the whole-chunk accessors, which hand out the
+    /// array the file was read into.
+    private long[] pageSlice(long[] histograms, int pageIndex, String level) {
+        if (histograms == null) {
+            return null;
+        }
+        int pageCount = getPageCount();
+        Objects.checkIndex(pageIndex, pageCount);
+        if (histograms.length % pageCount != 0) {
+            throw new IllegalStateException("Malformed Parquet metadata: " + level
+                    + "-level histogram holds " + histograms.length + " entries for " + pageCount
+                    + " pages, which is not a whole number of entries per page");
+        }
+        int stride = histograms.length / pageCount;
+        return Arrays.copyOfRange(histograms, pageIndex * stride, (pageIndex + 1) * stride);
     }
 }

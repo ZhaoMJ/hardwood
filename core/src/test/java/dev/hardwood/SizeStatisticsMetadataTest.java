@@ -110,6 +110,11 @@ class SizeStatisticsMetadataTest {
             ColumnIndex tags = columnIndexOf(rowGroup.columns().get(TAGS));
             assertThat(tags.repetitionLevelHistograms()).containsExactly(4L, 1L);
             assertThat(tags.definitionLevelHistograms()).containsExactly(1L, 1L, 0L, 3L);
+
+            // One page, so a page slice is the whole concatenation — and the stride the
+            // record derives from it recovers the column's max levels, 1 and 3.
+            assertThat(tags.repetitionLevelHistogram(0)).containsExactly(4L, 1L);
+            assertThat(tags.definitionLevelHistogram(0)).containsExactly(1L, 1L, 0L, 3L);
         }
     }
 

@@ -68,9 +68,17 @@ number of values at level *i*. The `ColumnIndex` histograms hold the same per pa
 **flattened** into one list of `pageCount × (maxLevel + 1)` entries, page-major: page *p*
 occupies `[p * (maxLevel + 1), (p + 1) * (maxLevel + 1))`.
 
-The flattened layout is carried through unchanged. No slicing accessor is added: the max
-level needed to compute a stride comes from `ColumnSchema`, which the metadata records do
-not reference.
+The flattened layout is carried through unchanged, and `ColumnIndex` slices a page out of it
+through `repetitionLevelHistogram(int)` / `definitionLevelHistogram(int)`. No schema
+reference is needed for that: the record knows its own page count from `nullPages`, and the
+concatenation holds `maxLevel + 1` entries per page, so the stride is
+`histograms.length / getPageCount()` and the column's maximum level follows from the two
+lengths. A length that is not a whole number of pages has no stride describing it and
+raises `IllegalStateException`; an absent histogram stays `null`, as it is on the
+whole-chunk accessor.
+
+The slice is a copy. The whole-chunk accessors hand out the array the file was read into,
+so a caller that wants to avoid the copy indexes the flat array directly.
 
 ### Additions to existing records
 
