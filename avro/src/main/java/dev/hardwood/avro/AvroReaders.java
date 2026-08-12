@@ -7,10 +7,13 @@
  */
 package dev.hardwood.avro;
 
+import java.util.function.Supplier;
+
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
 /// Factory for creating [AvroRowReader] instances from a
@@ -97,11 +100,6 @@ public final class AvroReaders {
         }
 
         public AvroRowReader build() {
-            // Convert before building the underlying reader: conversion rejects
-            // schemas Avro cannot represent, and building the underlying reader
-            // already starts a column worker per projected column — workers that
-            // a rejection here would orphan, with no AvroRowReader to close them.
-            AvroPlanNode plan = AvroSchemaConverter.plan(fileReader.getFileSchema(), projection);
             ParquetFileReader.RowReaderBuilder underlying = fileReader.buildRowReader()
                     .projection(projection);
             if (filter != null) {
@@ -113,7 +111,20 @@ public final class AvroReaders {
             if (tailRows > 0) {
                 underlying.tail(tailRows);
             }
-            return new AvroRowReader(underlying.build(), plan);
+            return buildReader(
+                    () -> AvroSchemaConverter.plan(fileReader.getFileSchema(), projection),
+                    underlying::build);
         }
+    }
+
+    /// Convert before building the underlying reader: conversion rejects schemas Avro
+    /// cannot represent, and building the underlying reader already starts a column
+    /// worker per projected column — workers that a rejection here would orphan, with
+    /// no [AvroRowReader] to close them.
+    static AvroRowReader buildReader(Supplier<AvroPlanNode> planSupplier,
+            Supplier<RowReader> rowReaderSupplier) {
+        AvroPlanNode plan = planSupplier.get();
+        RowReader rowReader = rowReaderSupplier.get();
+        return new AvroRowReader(rowReader, plan);
     }
 }
