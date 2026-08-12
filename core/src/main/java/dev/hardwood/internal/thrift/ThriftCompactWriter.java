@@ -37,7 +37,7 @@ public class ThriftCompactWriter {
 
     /// Write the STOP marker that terminates a struct's fields.
     public void writeFieldStop() {
-        out.write(0);
+        out.write(ThriftCompactConstants.STOP);
     }
 
     /// Write a list header.
@@ -45,11 +45,11 @@ public class ThriftCompactWriter {
     /// @param size number of elements
     /// @param elementType the element type
     public void writeListBegin(int size, ThriftCompactConstants.ElementType elementType) {
-        if (size < 15) {
+        if (size < ThriftCompactConstants.LONG_FORM_SIZE) {
             out.write((size << 4) | elementType.code());
         }
         else {
-            out.write(0xF0 | elementType.code());
+            out.write((ThriftCompactConstants.LONG_FORM_SIZE << 4) | elementType.code());
             writeVarint(size);
         }
     }

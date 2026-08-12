@@ -206,8 +206,7 @@ public class ThriftCompactReader {
     public FieldHeader readFieldHeader() throws IOException {
         byte b = readByte();
 
-        if (b == 0) {
-            // STOP field
+        if (b == ThriftCompactConstants.STOP) {
             lastFieldId = 0;
             return null;
         }
