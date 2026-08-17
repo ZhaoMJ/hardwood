@@ -15,6 +15,7 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
+import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -108,12 +109,13 @@ public final class ColumnAcrossRowGroupsScreen {
             String max = stats != null && stats.maxValue() != null
                     ? IndexValueFormatter.format(stats.maxValue(), col, state.logicalTypes())
                     : "—";
-            String nulls = stats != null && stats.nullCount() != null
-                    ? Fmt.fmt("%,d", stats.nullCount())
-                    : "—";
-            double ratio = cmd.totalCompressedSize() == 0
-                    ? 0.0
-                    : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
+            // This screen is the interactive twin of `inspect columns --column`:
+            // one row per row group for one column. The unencoded size belongs
+            // here for the same reason it belongs there — it is what says
+            // whether a chunk is large because of its values or its encoding.
+            LevelSummary summary = LevelSummary.of(model.schema(), col, cmd);
+            long nullCount = summary.nullCount(stats);
+            String nulls = nullCount >= 0 ? Fmt.fmt("%,d", nullCount) : "—";
             // Page count from OffsetIndex if present; without OI we'd need
             // to walk page headers, which the chunk-detail screen does
             // already — render "—" here.
@@ -125,14 +127,16 @@ public final class ColumnAcrossRowGroupsScreen {
                     Fmt.fmt("%,d", rg.numRows()),
                     pages,
                     Sizes.format(cmd.totalCompressedSize()),
-                    Fmt.fmt("%.1f×", ratio),
+                    Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "—"),
+                    summary.hasUnencoded() ? Sizes.format(summary.unencodedBytes()) : "—",
                     cmd.dictionaryPageOffset() != null ? "yes" : "no",
                     cc.columnIndexOffset() != null ? "yes" : "no",
                     nulls,
                     min,
                     max));
         }
-        Row header = Row.from("RG", "Rows", "Pages", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
+        Row header = Row.from("RG", "Rows", "Pages", "Comp", "Compression", "Unencoded",
+                        "Dict", "CI", "Nulls", "Min", "Max")
                 .style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
@@ -148,13 +152,14 @@ public final class ColumnAcrossRowGroupsScreen {
                 .header(header)
                 .rows(rows)
                 .widths(new Constraint.Length(4),
-                        new Constraint.Length(12),
-                        new Constraint.Length(8),
-                        new Constraint.Length(12),
-                        new Constraint.Length(6),
-                        new Constraint.Length(5),
-                        new Constraint.Length(5),
                         new Constraint.Length(10),
+                        new Constraint.Length(7),
+                        new Constraint.Length(11),
+                        new Constraint.Length(11),
+                        new Constraint.Length(11),
+                        new Constraint.Length(5),
+                        new Constraint.Length(5),
+                        new Constraint.Length(9),
                         new Constraint.Fill(1),
                         new Constraint.Fill(1))
                 .columnSpacing(1)

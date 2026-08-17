@@ -34,7 +34,7 @@ run the CLI via Docker without installing it locally — see the [Docker section
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
-| `hardwood inspect columns` | Show compressed, uncompressed and unencoded byte sizes per column, ranked |
+| `hardwood inspect columns` | Rank columns by size, with each column's share of the file, its compression, its data-page encoding and dictionary cardinality, and its unencoded size |
 | `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |
 | `hardwood dive` | Interactively explore a file's structure in a TUI |
 
@@ -61,10 +61,10 @@ hardwood print -f data.parquet
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 
-# Rank columns by size, including the unencoded BYTE_ARRAY size
+# Rank columns by size: share of the file, compression, encoding, unencoded size
 hardwood inspect columns -f data.parquet
 
-# Per-row-group detail and level histograms for one column
+# Per-row-group detail and named level histograms for one column
 hardwood inspect columns -f data.parquet --column order.tags.list.element
 
 # Restrict that detail to a single row group
@@ -105,17 +105,21 @@ navigable session. Typical things to reach for it for:
   filter the tree to leaves matching a substring.
 - **Spot the heavy column chunks** in a row group — Row groups → Column
   chunks ranks by compressed size with the codec and dictionary flag
-  alongside.
+  alongside. Schema → a leaf column → the row-group table does the same
+  across row groups for one column, and adds its unencoded size.
 - **Check page-level statistics and indexes** — drill from a chunk into
   Pages, Column index, or Offset index; `Enter` on a page opens the
   full thrift header, including inline statistics when no Column Index
   is present.
 - **See where a column's size and nulls come from** — Column chunk
-  detail shows the unencoded `BYTE_ARRAY` size, the record and
-  present-value counts, and average fan-out; `l` adds the repetition and
-  definition level histograms with each level named after the schema
+  detail groups its facts into Identity, Storage, Content and Layout.
+  Storage carries the unencoded size, what it expands to from disk, and
+  the encoding the data pages use with its dictionary's cardinality;
+  Content the record and present-value counts. `l` adds the repetition
+  and definition level histograms with each level named after the schema
   node it belongs to, so an absent field reads differently from an empty
-  list.
+  list. The pane scrolls with `↑↓` when it has focus; its title shows a
+  line range whenever anything is below the fold.
 - **Inspect dictionary entries** for a column — Dictionary screen with
   `/` substring filter; `Enter` reveals the full untruncated value of
   the highlighted entry.
@@ -145,6 +149,7 @@ navigable session. Typical things to reach for it for:
 | `/` | Inline search (Schema, Column index, Dictionary) |
 | `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
+| `↑` / `↓` | Scroll the facts pane when it has focus (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |

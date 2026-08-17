@@ -26,41 +26,60 @@ to report their presence; displaying them per page is out of scope.
 ## Screen
 
 Example column is `websites.list.element`, a `LIST<optional STRING>`
-inside an optional group (`max def 3`, `max rep 1`). Everything above
-the `Size statistics` separator is unchanged.
+inside an optional group (`max def 3`, `max rep 1`).
+
+The pane is grouped rather than a flat list of label/value rows. Four
+captions — Identity, Storage, Content, Layout — let the eye find the
+group holding the fact it wants instead of reading two dozen uniform
+rows, and the offsets go last because almost no reader needs them.
+A derived figure that qualifies a count rides on that count's row
+rather than standing as a row of its own: fan-out is a property of
+`Values`, not an independent fact, and a bare `6.19` on its own line
+would read as one with no scale.
 
 ```
 ╭ websites.list.element (RG #0) ───────────────────────────╮╭ Drill into ──────────────────────────╮
-│ Values                6,488,062                          ││▶ Pages           96 pages            │
-│ Nulls                 196,606                            ││  Column index    present · levels    │
-│ Uncompressed          31.8 MB                            ││  Offset index    present · unencoded │
-│ Compressed            12.4 MB                            ││  Dictionary      present             │
-│ Min                   "airport"                          ││                                      │
-│ Max                   "wheelchair"                       ││                                      │
+│ Identity                                                 ││▶ Pages           96 pages            │
+│   Path                websites.list.element              ││  Column index    present · levels    │
+│   Physical            BYTE_ARRAY                         ││  Offset index    present · unencoded │
+│   Logical             STRING                             ││  Dictionary      present             │
 │                                                          ││                                      │
-│ Size statistics       chunk + 96 pages                   ││                                      │
-│ Unencoded             66.0 MB  (+24.0 MB lengths)        ││                                      │
-│ Records               1,048,576                          ││                                      │
-│ Present values        6,291,456                          ││                                      │
-│ Avg fan-out           6.19 slots/record                  ││                                      │
-│ Avg list length       7.10  (non-empty)                  ││                                      │
+│ Storage                                                  ││                                      │
+│   Compressed          12.4 MiB  (39.0% of uncompressed)  ││                                      │
+│   Uncompressed        31.8 MiB                           ││                                      │
+│   Codec               ZSTD                               ││                                      │
+│   Encoding            PLAIN+DICT 92%  (966k of 1.05M)    ││                                      │
+│   Chunk encodings     PLAIN, RLE, RLE_DICTIONARY         ││                                      │
+│   Size statistics     chunk + 96 pages                   ││                                      │
+│   Unencoded           66.0 MiB  (5.3× compressed, …)     ││                                      │
+│   Avg value size      10 B                               ││                                      │
 │                                                          ││                                      │
-│ Def levels            max 3                              ││                                      │
+│ Content                                                  ││                                      │
+│   Records             1,048,576                          ││                                      │
+│   Values              6,488,062  (6.19 per record)       ││                                      │
+│   Present             6,291,456  (97.0%)                 ││                                      │
+│   Nulls               196,606  (3.0%)                    ││                                      │
+│   Avg list length     7.10  (non-empty)                  ││                                      │
+│                                                          ││                                      │
+│ Def levels (max 3)                                       ││                                      │
 │   0  websites null        52,428   0.8% ▏                ││                                      │
 │   1  websites empty      104,857   1.6% ▏                ││                                      │
 │   2  element null         39,321   0.6% ▏                ││                                      │
 │   3  element present   6,291,456  97.0% ███████████▋     ││                                      │
 │                                                          ││                                      │
-│ Rep levels            max 1                              ││                                      │
+│ Rep levels (max 1)                                       ││                                      │
 │   0  new record        1,048,576  16.2% █▉               ││                                      │
 │   1  websites.list     5,439,486  83.8% ██████████▏      ││                                      │
+│                                                          ││                                      │
+│ Layout                                                   ││                                      │
+│   Data offset         109,970                            ││                                      │
+│   …                                                      ││                                      │
 ╰──────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
  [Tab] pane  [↑↓] move  [Enter] open  [l] levels  [t] logical types  [Esc] back  │  [?] help  [q] quit
 ```
 
-The facts pane is a `Paragraph` with no scroll, and the two level
-blocks add roughly fourteen lines to a pane that already runs to
-seventeen. `l` toggles them, in the same shape as the existing `t`:
+The two level blocks add roughly fourteen lines to a pane that already
+runs to twenty. `l` toggles them, in the same shape as the existing `t`:
 handled before the MENU-only early return so it works from either pane,
 carried as a flag on `ScreenState.ColumnChunkDetail`, and advertised in
 the key bar only when the chunk has a histogram to show. It defaults
@@ -76,6 +95,19 @@ The level blocks are bounded by `maxDefinitionLevel + 1` and
 `maxRepetitionLevel + 1`, so the viewport-virtualization rule in
 `CLAUDE.md` does not apply — there is no collection here whose size
 tracks the data.
+
+The pane scrolls. Even collapsed it runs past the bottom of a short
+terminal, and a `Paragraph` drops what does not fit without saying so,
+which is indistinguishable from a complete pane. `scrollTop` rides on
+`ScreenState.ColumnChunkDetail`; ↑/↓, PgUp/PgDn and g/G drive it while
+the facts pane has focus, where they otherwise mean nothing. The title
+carries a `1-35/39` range whenever anything is hidden, so a clipped
+pane is never silent. `FooterScreen` already works this way.
+
+A chunk with no usable histogram at all has nothing to collapse: its two
+blocks are one `—` row each, so they are shown outright and neither the
+`Levels` row nor the `[l]` hint appears. The toggle and its key exist
+only where there is a block worth the keystroke.
 
 ### Menu hints
 
@@ -122,13 +154,28 @@ of the `i`-th repeated node, relative to the root.
 | Row | Definition |
 |---|---|
 | `Size statistics` | `chunk + N pages` / `chunk only` / `— (not written)` |
-| `Unencoded` | `unencoded_byte_array_data_bytes`, with `4 × present values` as a parenthetical — the per-value length prefixes the field excludes, so the two together are the real PLAIN size. `BYTE_ARRAY` only |
+| `Compressed` | with the codec's effect as a parenthetical, stated on the row it applies to |
+| `Unencoded` | what the values occupy with no encoding, and what that is as a multiple of the compressed size. Recorded in `unencoded_byte_array_data_bytes` for `BYTE_ARRAY`; for a fixed width it is `present values × width`, so the figure exists on every column. For `BYTE_ARRAY` the parenthetical also carries `4 × present values`, the per-value length prefixes the field excludes |
 | `Records` | `rep[0]` |
-| `Present values` | `def[maxDef]` |
-| `Avg fan-out` | `sum(def) / rep[0]`, in slots per record |
+| `Present` | `def[maxDef]`, with its share of `Values` |
+| `Nulls` | `null_count` where the writer recorded one, otherwise `Values − Present`, with its share of `Values`. For a required column that is zero, which the schema settles even where no statistics were written — reporting `—` would contradict the `Present` row beside it |
+| `Encoding` | what the *data* pages use, from `encoding_stats`, abbreviated and `+`-joined, followed by the dictionary's cardinality where it has one. `Chunk encodings` follows only where `encoding_stats` exists and so made the two differ: the declared list carries the dictionary page and the RLE level streams as well, and cannot express a dictionary abandoned partway |
+| dictionary cardinality | dictionary `num_values` ÷ the values it could hold an entry for, as a whole percent. The denominator is the present-value count where known, since nulls never reach a dictionary. `<1%` rather than `0%` for a non-zero count, which beside a `DICT` label would read as "no dictionary" |
+| fan-out | `sum(def) / rep[0]`, as a `per record` qualifier on the `Values` row; `1.0` by definition where the column cannot repeat |
 | `Avg list length` | non-empty list elements ÷ records holding a non-empty list |
-| `Avg value size` | `unencoded / present values`. `BYTE_ARRAY` only |
+| `Avg value size` | `unencoded / present values`. `BYTE_ARRAY` only — for a fixed width it would restate the width |
 | level rows | count, share of `sum(def)` or `sum(rep)`, bar |
+
+The unencoded size is the one figure here that predicts read-side cost:
+compressed and uncompressed both measure the encoded form, so a
+dictionary-encoded column looks cheap beside what it costs to
+materialise. What it does *not* support is a verdict on the encoding
+itself. Comparing it against `uncompressedBytes` yields a difference in
+uncompressed bytes, and every question a reader actually has is about
+compressed ones — a column whose dictionary looks worth 170 KiB
+uncompressed can be worth nothing at all on disk, because the codec
+finds the same redundancy either way. Answering that needs a re-encode,
+which a metadata reader cannot do, so no such figure is offered.
 
 `Avg list length` needs the level at which the first repeated node
 sits. Let `e` be its index in `d₁…d_maxDef`; definition levels below
@@ -151,13 +198,23 @@ placeholders. Two cases are distinct:
 - **Redundant.** When `maxRepetitionLevel == 0` every value is its own
   record, and when `maxDefinitionLevel == 0` every value is present. The
   quantities are known — both fall back to `num_values` — but `Records`,
-  `Present values` and `Avg fan-out` would restate the `Values` row, so
-  they are not displayed. `Avg value size` still consumes the
-  present-value count, which is what makes it available on a flat
-  required `BYTE_ARRAY` column.
+  `Present` and the fan-out would restate the `Values` row. In `dive`
+  they are dropped, where a redundant fact costs a line in a pane that
+  overflows. In the `inspect` table they are printed: the column takes
+  its width either way, and a blank cell makes a reader — or a parser —
+  reconstruct a number already known.
 - **Unknown.** Where the histogram a quantity needs is absent or empty
   and no such fallback applies, the quantity does not exist and its row
-  is dropped.
+  is dropped. `records()` and `presentValues()` throw rather than fall
+  back in that case, so a caller that skips the guard fails loudly
+  instead of reporting level slots as records or nulls as values.
+
+`Size statistics` reads `chunk + N pages` when *either* page-level field
+is present: the histograms live in `ColumnIndex` and the unencoded sizes
+in `OffsetIndex`, and a required `BYTE_ARRAY` column has only the
+latter to write. A page index that is present but unreadable is `-` on
+`inspect` rather than `chunk only`, which would be a claim the reader
+cannot check.
 
 ## Consistency check
 
@@ -188,7 +245,7 @@ the spec, and the unencoded size is still the interesting number:
 
 ```
 │ Size statistics       chunk + 240 pages                  │
-│ Unencoded             420.1 MB  (+48.0 MB lengths)       │
+│ Unencoded             420.1 MiB  (+48.0 MiB lengths)     │
 │ Avg value size        35 B                               │
 │ Def levels            — (max 1, redundant with Nulls)    │
 │ Rep levels            — (not repeated)                   │
@@ -197,8 +254,19 @@ the spec, and the unencoded size is still the interesting number:
 A present but empty histogram is distinct from an absent one — a writer
 emits `definition_level_histogram = []` for a required, non-repeated
 column — and is reported as the `—` form rather than indexed into.
-Non-`BYTE_ARRAY` columns omit the `Unencoded` and `Avg value size` rows
-entirely instead of showing a placeholder.
+Non-`BYTE_ARRAY` columns keep the `Unencoded` row, computed from the
+value count, and omit only `Avg value size`, which for a fixed width
+would restate the width. A writer omits `SizeStatistics` altogether for
+a required, non-repeated, fixed-width column — the shape least able to
+spare the figure, since nothing else in the footer reports its size —
+so the summary forms regardless and `hasSizeStatistics()` reports
+whether one was recorded.
+
+A histogram whose length is neither zero nor `maxLevel + 1` is neither
+of those: the writer meant to record one and got it wrong. Pairing its
+counts with the level names would misreport them, so it is dropped from
+the block and named by the consistency check instead — `def histogram
+has 3 buckets, max def 3 needs 4`.
 
 ## Narrow terminals
 
@@ -216,29 +284,71 @@ carries sub-cell resolution at small shares.
 
 ## `hardwood inspect columns`
 
-The ranked table gains an `Unencoded` column, summed per column path
-across row groups and `-` where the column is not `BYTE_ARRAY` or the
-statistics are absent — matching the existing `-` for an unavailable
-page count:
+The ranked table answers "which column is this file, and what is the
+lever". `Share` states the first question rather than leaving it as
+arithmetic over `Compressed`; `Codec` and `Compression` sit together so
+the percentage names what it divides; `Unencoded` is summed per column
+path across row groups, `-` only where the present-value count is
+unknown. `Uncompressed` is not shown — it existed only as the
+percentage's other operand and follows from the two figures that are:
 
 ```
-Rank  Column                   Type        Compressed  Uncompressed  Unencoded  Ratio  # Pages
-   1  order.description        BYTE_ARRAY     61.7 MB      184.2 MB   420.1 MB  33.5%      240
-   2  order.tags.list.element  BYTE_ARRAY     12.4 MB       31.8 MB    66.0 MB  39.0%       96
-   3  order.total_cents        INT64          38.4 MB       96.0 MB          -  40.0%      120
++------+-------------------------+------------+-------+------------+-------+-------------+-----------------+-----------+---------+
+| Rank | Column                  | Type       | Codec | Compressed | Share | Compression | Encoding        | Unencoded | # Pages |
++------+-------------------------+------------+-------+------------+-------+-------------+-----------------+-----------+---------+
+|    1 |       order.description | BYTE_ARRAY |  ZSTD |   61.7 MiB | 33.5% |       33.5% | PLAIN+DICT 100% | 420.1 MiB |     240 |
+|    2 | order.tags.list.element | BYTE_ARRAY |  ZSTD |   12.4 MiB |  6.7% |       39.0% |  PLAIN+DICT 92% |  66.0 MiB |      96 |
+|    3 |       order.total_cents |      INT64 |  ZSTD |   38.4 MiB | 20.8% |       40.0% |        DICT <1% |  96.0 MiB |     120 |
++------+-------------------------+------------+-------+------------+-------+-------------+-----------------+-----------+---------+
 ```
+
+`Encoding` is here and not only under `--column` because the reason to
+scan this table is to pick the column worth looking at more closely, and
+a dictionary the writer abandoned is one of the few things that decides
+it. The cell is the union across row groups: a fallback in any one of
+them is a property of the column as the file stores it.
+
+The cardinality is the other. `DICT` reads identically for a dictionary
+that pays for itself and one that holds an entry per value, and the
+second is a copy of the column: the values are stored once verbatim in
+the dictionary page and once more as a stream of distinct indices, which
+is high-entropy by construction and survives the codec. It goes
+unnoticed because writers dictionary-encode by default and reconsider
+only when the dictionary outgrows its size limit — a high-cardinality
+column that stays under the limit keeps a useless dictionary silently.
+
+The figure is deliberately a number and not a verdict. What a column
+*should* be encoded as is not derivable from the footer, as the removed
+PLAIN comparison showed; `100%` says the dictionary is a second copy,
+and re-encoding is what says what to do about it.
+
+Both figures cost reads the footer cannot serve. The dictionary's
+`num_values` lives on its page header, so the ranked table takes one
+short seek per column chunk on top of the offset-index read it already
+does. That is a real cost on a wide file and it buys the only view from
+which the reader can *find* the column: a figure reachable solely by
+drilling into columns one at a time answers a question nobody knew to
+ask. `dive` pays it only on the column chunk detail screen, and caches
+per chunk — the list screens re-render on every keystroke, and one read
+per visible row would turn footer arithmetic into N round trips.
 
 A `--column <path>` option prints the per-chunk detail — the same facts
-as the dive pane, one row per row group, followed by the histograms:
+as the dive pane, one row per row group, followed by the histograms.
+The column set is fixed whatever the column's shape, so two runs are
+comparable and anything parsing the output sees a stable table; a cell
+is `-` only where the value genuinely is not known:
 
 ```
 $ hardwood inspect columns -f orders.parquet --column order.tags.list.element
 
 order.tags.list.element  BYTE_ARRAY / String  max def 3  max rep 1
 
-RG  Values     Nulls    Records    Present    Fan-out  Unencoded  Size stats
- 0  6,488,062  196,606  1,048,576  6,291,456     6.19    66.0 MB  chunk + 96 pages
- 1  6,502,110  201,004  1,048,576  6,301,106     6.20    66.1 MB  chunk + 96 pages
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
+| RG | Values    | Nulls   | Records   | Present   | Fan-out | Codec | Compressed | Compression | Encoding   | Unencoded |
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
+|  0 | 6,488,062 | 196,606 | 1,048,576 | 6,291,456 |    6.19 |  ZSTD |   61.7 MiB |       33.5% | PLAIN+DICT |  66.0 MiB |
+|  1 | 6,502,110 | 201,004 | 1,048,576 | 6,301,106 |    6.20 |  ZSTD |   61.8 MiB |       33.6% | PLAIN+DICT |  66.1 MiB |
++----+-----------+---------+-----------+-----------+---------+-----------+------------------+
 
 Definition levels (all row groups, max 3)
  0  tags null           104,857   0.8%  ▏
@@ -257,7 +367,14 @@ the table and the histograms to a single row group.
 
 Bars are the same plain characters used by `dive`, so the two surfaces
 render identically. The `inspect` commands emit no colour and this does
-not change that.
+not change that; the consistency check is the `⚠` prefix and the
+wording alone, one line per offending row group under the table.
+
+Output is written as UTF-8 whatever the platform encoding says. The
+bars, the `—` placeholders and the `⚠` are all non-ASCII, and a default
+stream encodes them as `?` on a host with no UTF-8 locale — a native
+image worst of all, since its default charset is fixed when the image
+is built and no runtime `LANG` reaches it.
 
 ## `LevelSummary`
 
@@ -273,8 +390,51 @@ The bar rendering and the schema walk live in the same class. Their only
 consumer is `LevelSummary` itself, and splitting them out would add two
 files with one call site each.
 
-An absent-statistics sentinel lets both callers branch once on
-`summary.present()` rather than null-check each row.
+The factory always returns a summary: a chunk with no `SizeStatistics`
+still has a shape, and for a fixed-width column the unencoded size
+follows from the value count alone. `hasSizeStatistics()` reports
+whether the file recorded one. Quantities that cannot be established
+throw rather than fall back — `records()` and `presentValues()` are
+right to return `num_values` only for a column that cannot repeat or
+cannot be null, and a caller that skips the guard would otherwise read
+level slots as records and nulls as present values. The two page-index predicates — whether the column index carries
+level histograms, whether the offset index carries unencoded sizes — are
+static on the same class, since both surfaces ask them and each answers
+half of "does the page index describe these pages".
+
+## One figure, one rendering
+
+A reader moves between the two surfaces on the same file, so a quantity
+that appears on both must appear the same way. Three shared helpers in
+`dev.hardwood.cli.internal` are what hold that:
+
+- `Sizes.compression(compressed, uncompressed, absent)` renders
+  compression as the percentage of the uncompressed size that survived
+  the codec — everywhere. `dive` previously showed a `×` factor on its
+  overview, row-group and chunk tables while `inspect` showed a
+  percentage, which describes the same quantity two ways and inverts
+  between them. The row-group detail pane's group caption is `Storage`,
+  not `Compression`, since it now holds a `Compression` row of its own
+  and `Storage` is what the column chunk detail already calls the same
+  three figures.
+- `Encodings.dataPages(metaData)` decides what a chunk's values are
+  encoded with, and `Encodings.label(...)` renders it — ordered by the
+  enum rather than by the caller's iteration, since a `Set.of` iterates
+  in an order that varies between JVM runs and this string is what a
+  reader compares between two invocations. Reading the flat `encodings`
+  list instead gives a different and less informative answer for the
+  same chunk, and both labels would sit one screen apart.
+- `LevelSummary.nullCount(statistics)` decides which of the two sources
+  answers "how many nulls". That is not a per-surface choice: a required
+  column holds none whether or not `null_count` was written, and a
+  surface that reports `—` there contradicts the present-value count it
+  prints from the same schema fact.
+
+The cross-row-group screen — `Schema` → a leaf → the per-row-group
+table — is the interactive twin of `inspect columns --column`: the same
+shape, one row per row group for one column. It carries `Unencoded`
+for the same reason that table does, since it is what says whether a
+chunk is large because of its values or because of its encoding.
 
 ## `Theme.error()`
 
@@ -306,14 +466,42 @@ content — tier 4, `Style.EMPTY`. The `— (not written)` and
 ## Testing
 
 `LevelSummaryTest` covers the label walk against each schema shape that
-changes its outcome: a LIST, a MAP, an unannotated repeated field, a
-flat required column, a column with absent statistics, and one with a
-present-but-empty histogram. It also pins the derived scalars and both
-arms of the consistency check.
+changes its outcome: a LIST, a MAP, a struct member, an unannotated
+repeated field, a flat required column, a flat optional one, a column
+with absent statistics, and one with a present-but-empty histogram. It
+pins the derived scalars — including the buckets subtracted from both
+sides of `Avg list length`, which needs a column whose lists are not all
+present — all three arms of the consistency check, the throw that
+replaces a fallback where the count is unknown, and the element-wise
+combination `inspect` sums with.
 
 `DiveRenderTest` gains cases for the pane with levels toggled off, with
-them on, and for the not-written form. `InspectColumnsCommand` gains a
-test for `--column` and for the `Unencoded` table column.
+them on, for the not-written form, for the degraded rows that are shown
+without a toggle, for the key bar that offers `[l]` only where a
+histogram is behind it, and for the scroll: that the tail is
+unreachable at offset zero on a short pane and reachable when scrolled,
+and that a pane which fits carries no range marker.
+`InspectColumnsCommand` gains tests for `--column`, for the `Unencoded`
+column on both recorded and computed shapes, for the fixed column set,
+and for the file-wide sum against a four-row-group file, where sampling
+one chunk would read a quarter of the true count.
+
+`EncodingsTest` drives the encoding label directly with hand-built
+`PageEncodingStats`, since no checked-in file is large enough for a
+writer to reach for a dictionary at all, let alone abandon one. It
+covers the dictionary page being excluded from the data-page answer, the
+mid-chunk fallback, a zero-count page type, the fall back to the
+declared list, the enum ordering, and the cardinality: the 100% and
+`<1%` readings, the rounding that must not render `0%`, and the three
+cases where the figure is dropped rather than fabricated.
+`dive_screenshots_fixture.parquet` carries both readings end to end —
+`names.primary` holds an entry per value, `category` a handful for all
+of them — so the ranked table and the facts pane are pinned against a
+real file rather than only against assembled metadata.
+
+`SizesTest` pins the percentage form of `compression` and its
+placeholder, and `DiveRenderTest` asserts that no screen rendering it
+still shows a `×`.
 
 `ThemeTest` pins `error()` alongside the existing four.
 
@@ -335,9 +523,9 @@ screenshots show.
   derived-metric glossary, and the option table, per the agent-skills
   rule in [CONTRIBUTING.md](../CONTRIBUTING.md).
 - `_designs/DIVE_THEME.md` — the `error()` tier.
-- `docs/content/assets/cli/03-4-rg-column-chunk-detail.svg` regenerated
-  via the `screenshots` profile, plus one new capture for the levels
-  view.
+- The `dive` screenshots regenerated via the `screenshots` profile: the
+  chunk detail and a new capture for the levels view, plus the overview,
+  row-group and chunk-list captures that carried the `×` factor.
 - `FORMAT_COVERAGE.md` — size statistics have a functional consumer
   once this lands.
 - `ROADMAP.md` — the 9.1 Statistics entries.

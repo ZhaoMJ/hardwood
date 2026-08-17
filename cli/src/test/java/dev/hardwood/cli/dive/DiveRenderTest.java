@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
 import dev.hardwood.cli.dive.internal.Keys;
@@ -38,6 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DiveRenderTest {
 
     private static final Rect AREA = new Rect(0, 0, 120, 40);
+
+    private static final Pattern RANGE_MARKER = Pattern.compile("─ \\d+-\\d+/\\d+ ");
 
     private ParquetModel model;
 
@@ -418,7 +422,7 @@ class DiveRenderTest {
         assertThat(frame.contains("Size statistics")).isTrue();
         assertThat(frame.contains("chunk only")).isTrue();
         assertThat(frame.contains("Records")).isTrue();
-        assertThat(frame.contains("Avg fan-out")).isTrue();
+        assertThat(frame.contains("per record")).isTrue();
         assertThat(frame.contains("[l] to show")).isTrue();
         assertThat(frame.contains("websites empty")).isFalse();
     }
@@ -436,15 +440,16 @@ class DiveRenderTest {
         assertThat(frame.contains("[l] to show")).isFalse();
     }
 
-    /// A column the writer recorded no size statistics for collapses to one
-    /// row, rather than scaffolding every row it cannot fill.
+    /// A column the writer recorded no size statistics for says so, but still
+    /// shows the unencoded size, which follows from the value count and the
+    /// fixed width rather than from anything the writer had to record.
     @Test
     void columnChunkDetailReportsAMissingSizeStatisticsAsNotWritten() throws Exception {
         RenderHarness.RenderedFrame frame = renderSizeStatistics("metric_a", true);
 
         assertThat(frame.contains("— (not written)")).isTrue();
-        assertThat(frame.contains("Avg fan-out")).isFalse();
-        assertThat(frame.contains("Unencoded")).isFalse();
+        assertThat(frame.contains("per record")).isFalse();
+        assertThat(frame.contains("Unencoded")).isTrue();
     }
 
     /// A required, non-repeated BYTE_ARRAY has no histograms to show but
@@ -456,6 +461,168 @@ class DiveRenderTest {
         assertThat(frame.contains("Unencoded")).isTrue();
         assertThat(frame.contains("Avg value size")).isTrue();
         assertThat(frame.contains("Records")).isFalse();
+    }
+
+    /// `dive` and `hardwood inspect columns` must name the same encoding for
+    /// the same chunk. Both read `encoding_stats`, so both say what the data
+    /// pages use rather than repeating the flat list, which carries the
+    /// dictionary page and the RLE level streams too.
+    @Test
+    void columnChunkDetailNamesTheDataPageEncodingAndTheDeclaredList() throws Exception {
+        RenderHarness.RenderedFrame frame = renderSizeStatistics("names.primary", false);
+
+        assertThat(frame.contains("Encoding")).isTrue();
+        // Every value distinct, so the dictionary is a second copy of the
+        // column — the one thing `DICT` on its own cannot say.
+        assertThat(frame.contains("DICT 100%")).isTrue();
+        assertThat(frame.contains("150 entries for 150 values")).isTrue();
+        assertThat(frame.contains("Chunk encodings")).isTrue();
+    }
+
+    /// Without `encoding_stats` the declared list is where the label came
+    /// from, so showing it a second time would restate the row above it.
+    @Test
+    void columnChunkDetailDropsTheDeclaredListWithoutEncodingStats() throws Exception {
+        Path path = Path.of(getClass().getResource("/geospatial_e2e_test.parquet").toURI());
+        try (ParquetModel plainModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnChunkDetail(0, columnIndexOf(plainModel, "city_name"),
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), plainModel);
+
+            assertThat(frame.contains("Encoding")).isTrue();
+            assertThat(frame.contains("Chunk encodings")).isFalse();
+        }
+    }
+
+    /// A required column holds no nulls, which the schema settles whether or
+    /// not the writer recorded a `null_count`. Reporting `—` would contradict
+    /// the present-value count taken from the same place.
+    @Test
+    void columnChunkDetailReportsZeroNullsForARequiredColumnWithoutStatistics() throws Exception {
+        Path path = Path.of(getClass().getResource("/geospatial_e2e_test.parquet").toURI());
+        try (ParquetModel plainModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnChunkDetail(0, columnIndexOf(plainModel, "city_name"),
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), plainModel);
+
+            assertThat(frame.contains("Nulls")).isTrue();
+            assertThat(frame.contains("0  (0.0%)")).isTrue();
+        }
+    }
+
+    /// The cross-row-group screen is the interactive twin of
+    /// `inspect columns --column`, so it carries the same unencoded size and
+    /// the same percentage form of the compression.
+    @Test
+    void columnAcrossRowGroupsCarriesTheUnencodedSizeAndCompression() {
+        RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0), model);
+
+        assertThat(frame.contains("Unencoded")).isTrue();
+        assertThat(frame.contains("Compression")).isTrue();
+        assertThat(frame.contains("Ratio")).isFalse();
+    }
+
+    /// Every surface renders compression as a percentage of the uncompressed
+    /// size. A `×` factor on one screen and a `%` on the next describes the
+    /// same quantity two ways, which is the reading error this pins shut.
+    @ParameterizedTest
+    @MethodSource("compressionScreens")
+    void everyScreenRendersCompressionAsAPercentage(ScreenState state) {
+        RenderHarness.RenderedFrame frame = RenderHarness.render(AREA, state, model);
+
+        assertThat(frame.contains("Compression")).isTrue();
+        assertThat(frame.contains("×")).isFalse();
+    }
+
+    static Stream<ScreenState> compressionScreens() {
+        return Stream.of(
+                ScreenState.Overview.initial(),
+                new ScreenState.RowGroups(0),
+                new ScreenState.RowGroupDetail(0, ScreenState.RowGroupDetail.Pane.MENU, 0),
+                new ScreenState.ColumnChunks(0, 0, 0),
+                new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0));
+    }
+
+    /// Two `—` rows are not worth a toggle, so a chunk with no usable
+    /// histogram shows them outright and never advertises `[l]` — the key
+    /// would reveal exactly what is already on screen.
+    @Test
+    void columnChunkDetailShowsDegradedLevelRowsWithoutTheToggle() throws Exception {
+        RenderHarness.RenderedFrame collapsed = renderSizeStatistics("id", false);
+
+        assertThat(collapsed.contains("Def levels")).isTrue();
+        assertThat(collapsed.contains("— (required, every value present)")).isTrue();
+        assertThat(collapsed.contains("— (not repeated)")).isTrue();
+        assertThat(collapsed.contains("[l] to show")).isFalse();
+    }
+
+    @Test
+    void levelsKeyIsAdvertisedOnlyForAChunkWithAHistogram() throws Exception {
+        Path path = Path.of(getClass().getResource("/dive_screenshots_fixture.parquet").toURI());
+        try (ParquetModel sizeStatsModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            assertThat(keybarFor(sizeStatsModel, "websites.list.element")).contains("[l] levels");
+            // Size statistics, but both histograms empty.
+            assertThat(keybarFor(sizeStatsModel, "id")).doesNotContain("[l] levels");
+            // No size statistics at all.
+            assertThat(keybarFor(sizeStatsModel, "metric_a")).doesNotContain("[l] levels");
+        }
+    }
+
+    /// The facts pane runs to about forty lines on a nested column with its
+    /// levels shown, so on an ordinary terminal the tail falls off the bottom.
+    /// Dropping it silently is the hazard: the reader cannot tell a clipped
+    /// pane from a complete one.
+    @Test
+    void columnChunkDetailScrollsTheFactsPaneWhenItOverflows() throws Exception {
+        Path path = Path.of(getClass().getResource("/dive_screenshots_fixture.parquet").toURI());
+        try (ParquetModel model = ParquetModel.open(InputFile.of(path), path.toString())) {
+            int column = columnIndexOf(model, "names.common.key_value.value");
+            Rect shortArea = new Rect(0, 0, 120, 24);
+
+            RenderHarness.RenderedFrame top = RenderHarness.render(shortArea,
+                    new ScreenState.ColumnChunkDetail(0, column,
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, true, 0), model);
+            // The head is visible, the tail is not, and the title says so.
+            assertThat(top.contains("Path")).isTrue();
+            assertThat(top.contains("Rep levels")).isFalse();
+            assertThat(hasRangeMarker(top)).isTrue();
+
+            RenderHarness.RenderedFrame scrolled = RenderHarness.render(shortArea,
+                    new ScreenState.ColumnChunkDetail(0, column,
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, true, 40), model);
+            // Clamped to the last full viewport, so the final line is reachable.
+            assertThat(scrolled.contains("Rep levels")).isTrue();
+            assertThat(scrolled.contains("Path")).isFalse();
+        }
+    }
+
+    /// A pane that fits carries no range suffix — the marker is a statement
+    /// that content is hidden, not decoration.
+    @Test
+    void columnChunkDetailOmitsTheRangeWhenEverythingFits() throws Exception {
+        Path path = Path.of(getClass().getResource("/dive_screenshots_fixture.parquet").toURI());
+        try (ParquetModel model = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 120, 60),
+                    new ScreenState.ColumnChunkDetail(0, columnIndexOf(model, "metric_a"),
+                            ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false, 0), model);
+
+            assertThat(frame.contains("Path")).isTrue();
+            assertThat(frame.contains("— (not written)")).isTrue();
+            assertThat(hasRangeMarker(frame)).isFalse();
+        }
+    }
+
+    /// Whether the facts pane's title carries the `first-last/total` suffix
+    /// that says content is hidden below the fold.
+    private static boolean hasRangeMarker(RenderHarness.RenderedFrame frame) {
+        return frame.lines().stream().anyMatch(line -> RANGE_MARKER.matcher(line).find());
+    }
+
+    private static String keybarFor(ParquetModel model, String dottedName) {
+        return ColumnChunkDetailScreen.keybarKeys(new ScreenState.ColumnChunkDetail(
+                0, columnIndexOf(model, dottedName),
+                ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), model);
     }
 
     private static KeyEvent key(KeyCode code) {

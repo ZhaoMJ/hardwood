@@ -100,17 +100,16 @@ public final class RowGroupsScreen {
                     oiCount++;
                 }
             }
-            double ratio = compressed == 0 ? 0.0 : (double) uncompressed / compressed;
             rows.add(Row.from(
                     String.valueOf(i),
                     formatLong(rg.numRows()),
                     Sizes.format(uncompressed),
                     Sizes.format(compressed),
-                    Fmt.fmt("%.1f×", ratio),
+                    Sizes.compression(compressed, uncompressed, "—"),
                     ciCount + "/" + chunkCount,
                     oiCount + "/" + chunkCount));
         }
-        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio", "CI", "OI")
+        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Compression", "CI", "OI")
                 .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" Row groups " + Plurals.rangeOf(state.selection(),
@@ -125,7 +124,7 @@ public final class RowGroupsScreen {
                         new Constraint.Length(14),
                         new Constraint.Length(14),
                         new Constraint.Length(14),
-                        new Constraint.Length(8),
+                        new Constraint.Length(11),
                         new Constraint.Length(8),
                         new Constraint.Length(8))
                 .columnSpacing(2)

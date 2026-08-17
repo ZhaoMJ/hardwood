@@ -23,6 +23,7 @@ import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.FileIndexesScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
+import dev.hardwood.cli.dive.internal.Keys;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
@@ -47,7 +48,7 @@ class DiveStateTest {
         // behind. Data preview's auto-resize keys off Keys.viewportStride
         // so a stale observation would force a re-load and break the
         // explicit page-size assertions in this suite.
-        dev.hardwood.cli.dive.internal.Keys.resetObservedViewport();
+        Keys.resetObservedViewport();
         // 10 000 rows × 2 columns (id, value) in 1 RG / ~10 pages; has a Column Index.
         // Covers pagination, schema navigation, and column-index drills without
         // needing multiple fixtures.
@@ -642,6 +643,49 @@ class DiveStateTest {
         ColumnChunkDetailScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'l'), model, onFacts);
         assertThat(((ScreenState.ColumnChunkDetail) onFacts.top()).levels()).isTrue();
+    }
+
+    /// ↑/↓ mean nothing on the facts pane until it overflows, so they are
+    /// given to the scroll rather than left dead. The menu keeps them when it
+    /// has focus, which is why the branch is keyed on focus.
+    @Test
+    void columnChunkDetailScrollsFactsPaneWithArrowsAndClampsAtBothEnds() {
+        Keys.observeViewport(4);
+        NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                0, 0, ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false));
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.DOWN), model, stack);
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).scrollTop()).isEqualTo(1);
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.UP), model, stack);
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).scrollTop()).isZero();
+
+        // Already at the top: clamped, not negative.
+        ColumnChunkDetailScreen.handle(key(KeyCode.UP), model, stack);
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).scrollTop()).isZero();
+
+        // The bottom stops one viewport short of the end, so the last line
+        // sits on the last row rather than scrolling into empty space.
+        ColumnChunkDetailScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
+        int bottom = ((ScreenState.ColumnChunkDetail) stack.top()).scrollTop();
+        assertThat(bottom).isPositive();
+        ColumnChunkDetailScreen.handle(key(KeyCode.DOWN), model, stack);
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).scrollTop()).isEqualTo(bottom);
+    }
+
+    /// With the menu focused the same keys still move the selection — the
+    /// facts pane does not steal them.
+    @Test
+    void columnChunkDetailArrowsStillDriveTheMenuWhenItHasFocus() {
+        Keys.observeViewport(4);
+        NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                0, 0, ScreenState.ColumnChunkDetail.Pane.MENU, 0, true, false));
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.DOWN), model, stack);
+
+        ScreenState.ColumnChunkDetail top = (ScreenState.ColumnChunkDetail) stack.top();
+        assertThat(top.scrollTop()).isZero();
+        assertThat(top.menuSelection()).isNotZero();
     }
 
     /// Toggling levels must not disturb the other flag the screen carries.

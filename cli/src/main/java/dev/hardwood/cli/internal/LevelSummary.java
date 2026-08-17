@@ -10,7 +10,10 @@ package dev.hardwood.cli.internal;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
@@ -42,10 +45,14 @@ import dev.hardwood.schema.SchemaNode;
 /// @param definitionLevels one row per definition level, or empty when the file records no usable histogram
 /// @param repetitionLevels one row per repetition level, or empty when the file records no usable histogram
 /// @param mismatch description of a disagreement between the declared counts and the histograms, or `null` when they agree
+/// @param hasSizeStatistics whether the file records a `SizeStatistics` for this chunk at all
+/// @param type the column's physical type, which decides whether values carry a length prefix
 public record LevelSummary(
         long numValues,
         long unencodedBytes,
         boolean hasUnencoded,
+        boolean hasSizeStatistics,
+        PhysicalType type,
         int maxDefinitionLevel,
         int maxRepetitionLevel,
         int firstRepeatedLevel,
@@ -58,7 +65,10 @@ public record LevelSummary(
     public record LevelRow(int level, String label, long count, double share) {
     }
 
-    private static final char[] EIGHTHS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
+    /// The partial-cell block characters, indexed by eighths minus one. Whole
+    /// cells are appended as `█` rather than looked up here, so the full block
+    /// is not a member.
+    private static final char[] EIGHTHS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉'};
 
     private static final int LABEL_WIDTH = 20;
     private static final int COUNT_WIDTH = 10;
@@ -80,31 +90,58 @@ public record LevelSummary(
     private record LevelNode(String name, String dottedPath, RepetitionType repetitionType, String parentName) {
     }
 
-    /// Builds the summary for one column chunk, or returns `null` when the
-    /// file records no size statistics for it — the same convention the rest
-    /// of the metadata uses for an absent optional structure.
+    /// Builds the summary for one column chunk. Always succeeds: a chunk with
+    /// no `SizeStatistics` still has a shape, and for a fixed-width column the
+    /// unencoded size follows from the value count alone. Writers omit the
+    /// structure entirely for a required, non-repeated, fixed-width column,
+    /// which would otherwise be the case least able to spare the figure.
+    /// [#hasSizeStatistics()] reports whether the file recorded one.
     public static LevelSummary of(FileSchema schema, ColumnSchema column, ColumnMetaData metaData) {
         SizeStatistics statistics = metaData.sizeStatistics();
-        if (statistics == null) {
-            return null;
-        }
         int maxDefinitionLevel = column.maxDefinitionLevel();
         int maxRepetitionLevel = column.maxRepetitionLevel();
-        List<LevelRow> definitionLevels = rows(statistics.definitionLevelHistogram(),
+        List<LevelRow> definitionLevels = rows(
+                statistics != null ? statistics.definitionLevelHistogram() : null,
                 definitionLabels(schema, column), maxDefinitionLevel);
-        List<LevelRow> repetitionLevels = rows(statistics.repetitionLevelHistogram(),
+        List<LevelRow> repetitionLevels = rows(
+                statistics != null ? statistics.repetitionLevelHistogram() : null,
                 repetitionLabels(schema, column), maxRepetitionLevel);
-        Long unencoded = statistics.unencodedByteArrayDataBytes();
+        // The format records an unencoded size only for BYTE_ARRAY, because for
+        // every other type it is arithmetic rather than information: a fixed
+        // width times the values that are actually stored. Computing it makes
+        // the figure available for every column instead of half of them.
+        long present = presentValueCount(definitionLevels, maxDefinitionLevel, metaData.numValues());
+        Long recorded = statistics != null ? statistics.unencodedByteArrayDataBytes() : null;
+        long computed = recorded != null ? recorded : plainValueBytes(column, present);
         return new LevelSummary(
                 metaData.numValues(),
-                unencoded != null ? unencoded : 0L,
-                unencoded != null,
+                Math.max(computed, 0),
+                computed >= 0,
+                statistics != null,
+                column.type(),
                 maxDefinitionLevel,
                 maxRepetitionLevel,
                 firstRepeatedLevel(schema, column),
                 definitionLevels,
                 repetitionLevels,
-                mismatch(metaData, definitionLevels, repetitionLevels, maxDefinitionLevel));
+                mismatch(metaData, statistics, definitionLevels, repetitionLevels,
+                        maxDefinitionLevel, maxRepetitionLevel));
+    }
+
+    /// Whether the column index carries per-page level histograms. A page index
+    /// written before parquet-format 2.10 is still a page index, so the fields
+    /// themselves are what answer this.
+    public static boolean hasPageLevelHistograms(ColumnIndex columnIndex) {
+        return columnIndex != null
+                && (columnIndex.definitionLevelHistograms() != null
+                        || columnIndex.repetitionLevelHistograms() != null);
+    }
+
+    /// Whether the offset index carries a per-page unencoded `BYTE_ARRAY` size.
+    /// This is the only per-page size statistic a required, non-repeated column
+    /// has to record, so it is not implied by [#hasPageLevelHistograms].
+    public static boolean hasPageUnencodedSizes(OffsetIndex offsetIndex) {
+        return offsetIndex != null && offsetIndex.unencodedByteArrayDataBytes() != null;
     }
 
     /// Whether the file records a definition-level histogram that can be read.
@@ -125,18 +162,76 @@ public record LevelSummary(
         return hasRepetitionHistogram() || maxRepetitionLevel == 0;
     }
 
+    /// @throws IllegalStateException if [#hasRecords()] is false, since the
+    ///         fallback that serves a non-repeated column would count level
+    ///         slots as records for a repeated one
     public long records() {
+        if (!hasRecords()) {
+            throw new IllegalStateException("no record count: max rep " + maxRepetitionLevel
+                    + " column with no repetition histogram");
+        }
         return hasRepetitionHistogram() ? repetitionLevels.get(0).count() : numValues;
     }
 
     /// Whether the chunk's present-value count is known. A required column
     /// writes no definition histogram, but every one of its values is present.
     public boolean hasPresentValues() {
-        return hasDefinitionHistogram() || maxDefinitionLevel == 0;
+        return presentValueCount(definitionLevels, maxDefinitionLevel, numValues) >= 0;
     }
 
+    /// The present-value count, or -1 when the histogram it needs is absent and
+    /// no fallback applies. Shared by the factory, which needs it before an
+    /// instance exists, and by the accessors below.
+    private static long presentValueCount(List<LevelRow> definitionLevels, int maxDefinitionLevel,
+                                          long numValues) {
+        if (!definitionLevels.isEmpty()) {
+            return definitionLevels.get(maxDefinitionLevel).count();
+        }
+        return maxDefinitionLevel == 0 ? numValues : -1;
+    }
+
+    /// The bytes `count` values of this column occupy with no encoding, or -1
+    /// when the width is not fixed (`BYTE_ARRAY`, where the file records the
+    /// total instead) or the count is unknown. `BOOLEAN` is bit-packed, so it
+    /// rounds up to the byte.
+    private static long plainValueBytes(ColumnSchema column, long count) {
+        if (count < 0) {
+            return -1;
+        }
+        return switch (column.type()) {
+            case BOOLEAN -> (count + 7) / 8;
+            case INT32, FLOAT -> count * 4;
+            case INT64, DOUBLE -> count * 8;
+            case INT96 -> count * 12;
+            case FIXED_LEN_BYTE_ARRAY -> column.typeLength() != null ? count * column.typeLength() : -1;
+            case BYTE_ARRAY -> -1;
+        };
+    }
+
+    /// @throws IllegalStateException if [#hasPresentValues()] is false, since
+    ///         the fallback that serves a required column would count nulls as
+    ///         present values for a nullable one
     public long presentValues() {
-        return hasDefinitionHistogram() ? definitionLevels.get(maxDefinitionLevel).count() : numValues;
+        long present = presentValueCount(definitionLevels, maxDefinitionLevel, numValues);
+        if (present < 0) {
+            throw new IllegalStateException("no present-value count: max def " + maxDefinitionLevel
+                    + " column with no definition histogram");
+        }
+        return present;
+    }
+
+    /// The chunk's null count, or -1 when nothing establishes one. Which source
+    /// answers is not a per-surface choice: `null_count` where the writer
+    /// recorded it, and otherwise the count the present values imply — which for
+    /// a required column is zero, a fact the schema settles whether or not any
+    /// statistics were written. Reporting "unknown" for a column that cannot
+    /// hold a null would contradict the present-value count taken from the same
+    /// place.
+    public long nullCount(Statistics statistics) {
+        if (statistics != null && statistics.nullCount() != null) {
+            return statistics.nullCount();
+        }
+        return hasPresentValues() ? numValues - presentValues() : -1;
     }
 
     /// Total of the definition histogram, which the format defines as the
@@ -147,12 +242,17 @@ public record LevelSummary(
     }
 
     public boolean hasAvgFanOut() {
-        return hasDefinitionHistogram() && hasRecords() && records() > 0;
+        return hasRecords() && records() > 0 && (maxRepetitionLevel == 0 || hasDefinitionHistogram());
     }
 
     /// Level slots per record: how many values the chunk stores for each row
-    /// it covers.
+    /// it covers. A column that cannot repeat stores exactly one per record by
+    /// definition, which is the answer even where no histogram was written to
+    /// divide.
     public double avgFanOut() {
+        if (maxRepetitionLevel == 0) {
+            return 1.0;
+        }
         return definitionTotal() / (double) records();
     }
 
@@ -170,8 +270,10 @@ public record LevelSummary(
         return (definitionTotal() - below) / (double) (records() - below);
     }
 
+    /// Only meaningful where values vary in length. For a fixed-width column
+    /// the answer is the width, which the `Physical` row already states.
     public boolean hasAvgValueSize() {
-        return hasUnencoded && hasPresentValues() && presentValues() > 0;
+        return type == PhysicalType.BYTE_ARRAY && hasUnencoded && hasPresentValues() && presentValues() > 0;
     }
 
     public double avgValueSize() {
@@ -180,9 +282,12 @@ public record LevelSummary(
 
     /// The length prefixes `unencoded_byte_array_data_bytes` excludes: PLAIN
     /// writes a four-byte length before each value, so the two together are
-    /// the real PLAIN size.
+    /// the real PLAIN size. Zero for a fixed-width column, whose values carry
+    /// no prefix — which is what makes the two figures comparable.
+    ///
+    /// @throws IllegalStateException if [#hasPresentValues()] is false
     public long lengthPrefixBytes() {
-        return 4L * presentValues();
+        return type == PhysicalType.BYTE_ARRAY ? 4L * presentValues() : 0L;
     }
 
     /// Adds level histograms together across chunks. Counts at the same level
@@ -311,12 +416,23 @@ public record LevelSummary(
         return rows;
     }
 
-    /// The chunk is self-checking: its declared value count must equal both
-    /// histogram totals, and its null count must equal the values that never
-    /// reached the maximum definition level. A writer that disagrees is
-    /// reporting a defect worth surfacing rather than rendering silently.
-    private static String mismatch(ColumnMetaData metaData, List<LevelRow> definitionLevels,
-                                   List<LevelRow> repetitionLevels, int maxDefinitionLevel) {
+    /// The chunk is self-checking: every histogram it records must have one
+    /// bucket per level, its declared value count must equal both histogram
+    /// totals, and its null count must equal the values that never reached the
+    /// maximum definition level. A writer that disagrees is reporting a defect
+    /// worth surfacing rather than rendering silently.
+    private static String mismatch(ColumnMetaData metaData, SizeStatistics sizeStatistics,
+                                   List<LevelRow> definitionLevels, List<LevelRow> repetitionLevels,
+                                   int maxDefinitionLevel, int maxRepetitionLevel) {
+        String malformed = sizeStatistics == null ? null
+                : malformedHistogram("def", sizeStatistics.definitionLevelHistogram(), maxDefinitionLevel);
+        if (malformed == null && sizeStatistics != null) {
+            malformed = malformedHistogram("rep", sizeStatistics.repetitionLevelHistogram(),
+                    maxRepetitionLevel);
+        }
+        if (malformed != null) {
+            return malformed;
+        }
         long numValues = metaData.numValues();
         if (!definitionLevels.isEmpty() && total(definitionLevels) != numValues) {
             return Fmt.fmt("values %,d, sum(def) %,d", numValues, total(definitionLevels));
@@ -333,6 +449,20 @@ public record LevelSummary(
             return Fmt.fmt("nulls %,d, implied by def %,d", statistics.nullCount(), impliedNulls);
         }
         return null;
+    }
+
+    /// A histogram the file records with the wrong number of buckets cannot be
+    /// indexed by level, so [#rows] drops it rather than pairing counts with
+    /// the wrong names, and it is named here instead — a writer that emits one
+    /// is exactly the defect a reader opens this screen to find. An absent
+    /// histogram and a present but empty one are both legitimate and report
+    /// nothing.
+    private static String malformedHistogram(String kind, long[] histogram, int maxLevel) {
+        if (histogram == null || histogram.length == 0 || histogram.length == maxLevel + 1) {
+            return null;
+        }
+        return Fmt.fmt("%s histogram has %,d buckets, max %s %d needs %,d",
+                kind, histogram.length, kind, maxLevel, maxLevel + 1);
     }
 
     /// Definition level of the column's outermost repeated node, or 0 when it

@@ -140,18 +140,19 @@ public final class RowGroupDetailScreen {
                 oiCount++;
             }
         }
-        double ratio = compressed == 0 ? 0.0 : (double) uncompressed / compressed;
-
         List<Line> lines = new ArrayList<>();
         lines.add(fact("Row group index", String.valueOf(state.rowGroupIndex())));
         lines.add(fact("Rows", Fmt.fmt("%,d", rg.numRows())));
         lines.add(fact("Column chunks", String.valueOf(chunkCount)));
         lines.add(fact("Total byte size", Sizes.dualFormat(rg.totalByteSize())));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Compression ", Theme.accent().bold())));
+        // "Storage" rather than "Compression": the group holds a `Compression`
+        // row of its own now, and it is the same vocabulary the column chunk
+        // detail screen groups the same three figures under.
+        lines.add(Line.from(new Span(" Storage ", Theme.accent().bold())));
         lines.add(fact("  Compressed", Sizes.dualFormat(compressed)));
         lines.add(fact("  Uncompressed", Sizes.dualFormat(uncompressed)));
-        lines.add(fact("  Ratio", Fmt.fmt("%.2f×", ratio)));
+        lines.add(fact("  Compression", Sizes.compression(compressed, uncompressed, "—")));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Encoding mix ", Theme.accent().bold())));
         lines.add(fact("  Encodings", mix(encodingCounts)));

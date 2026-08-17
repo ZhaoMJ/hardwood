@@ -51,7 +51,7 @@ output, and how to chain a few commands into a diagnosis.
 | The same schema as Avro or Protobuf                                  | `hardwood schema -f FILE -F AVRO` / `-F PROTO`  |
 | A few actual rows, formatted                                         | `hardwood print -n 20 -f FILE`                  |
 | The raw file layout: size, footer offset/length, PAR1 magic          | `hardwood footer -f FILE`                       |
-| Per-column compressed/uncompressed/unencoded size, ranked            | `hardwood inspect columns -f FILE`              |
+| Per-column size, ranked: share, compression, encoding + dictionary cardinality | `hardwood inspect columns -f FILE`    |
 | Level histograms for one column: nulls vs empty lists                | `hardwood inspect columns -f FILE --column PATH` |
 | Per-row-group column chunks: type, codec, sizes                      | `hardwood inspect rowgroups -f FILE`            |
 | Pages (data + dictionary) and their min/max stats                    | `hardwood inspect pages -f FILE [-c COLUMN]`    |
@@ -80,15 +80,35 @@ spot these:
 - **`inspect pages` → the `Min` / `Max` / `Nulls` columns** show the actual
   bounds per page. If the predicate value falls _inside_ every page's min/max,
   skipping nothing is correct behavior, not a bug.
-- **`inspect columns` → `Ratio`** (compressed ÷ uncompressed, as a percent) and
-  **`# Pages`**: the row at the top (Rank 1) is the dominant scan cost; `100.0%`
-  means the column is stored uncompressed. A `# Pages` count (vs `-`) confirms a
-  page index exists for that column.
-- **`inspect columns` → `Unencoded`** is the size the `BYTE_ARRAY` data would
-  occupy with no encoding, which is what predicts read-side memory — a
-  dictionary-encoded string column can be small on disk and large in memory. It
-  is `-` for non-`BYTE_ARRAY` columns and for files written before
-  parquet-format 2.10, which do not record it.
+- **`inspect columns` → `Share`** is the column's percentage of the file's
+  compressed bytes: the row at the top (Rank 1) is the dominant scan cost.
+  **`Compression`** is compressed ÷ uncompressed for the named `Codec`;
+  `100.0%` means the codec achieved nothing. A `# Pages` count (vs `-`)
+  confirms a page index exists for that column.
+- **`inspect columns` → `Unencoded`** is what the values occupy with no
+  encoding, which predicts read-side memory — a dictionary-encoded column can be
+  small on disk and large once materialised. The file records it for
+  `BYTE_ARRAY`; for a fixed-width type it is the present-value count times the
+  width. It is `-` only where the present-value count is unknown.
+- **`inspect columns` → `Encoding`** names what the *data* pages use, read from
+  `encoding_stats`: `DICT`, `PLAIN`, `DELTA`, and so on. The ranked table shows
+  the union across row groups; `--column PATH` breaks it out per row group, and
+  `dive`'s column chunk detail shows it for a single chunk.
+- **`inspect columns` → the percentage after `DICT`** is the dictionary's
+  cardinality: entries ÷ values it could hold an entry for. This is the number
+  to scan for. `DICT <1%` is a dictionary doing its job. **`DICT 100%`** means
+  every value is distinct, so the column is stored twice — once verbatim in the
+  dictionary page, once as a stream of distinct indices — and no codec undoes
+  the second copy, because distinct indices are high-entropy by construction.
+  A high-cardinality column stays dictionary-encoded silently: writers
+  dictionary-encode by default and fall back only when the dictionary outgrows
+  its size limit, so one that stays under the limit is never reconsidered.
+  What to use instead is a question the metadata cannot answer — re-encode and
+  compare on disk. `DELTA_BYTE_ARRAY` for sorted or prefix-sharing strings and
+  `DELTA_BINARY_PACKED` for near-sequential integers are the usual answers.
+  `PLAIN+DICT` is the one worth acting on — the writer started with a dictionary
+  and abandoned it mid-chunk when it outgrew its size limit, leaving a
+  dictionary page that earns nothing for the pages after the fallback.
 - **`inspect columns --column PATH` → `tags null` vs `tags empty`** distinguishes
   a record whose field was absent from one whose list was empty. Nothing else in
   the metadata separates them: `Nulls` and the page index `null_counts` lump both
@@ -192,21 +212,23 @@ hardwood inspect rowgroups -f FILE   # per-row-group breakdown
 hardwood inspect pages     -f FILE   # encodings + page counts
 ```
 
-`inspect columns` ranks columns by compressed bytes and prints the compression
-`Ratio`, the `Unencoded` size, and `# Pages`:
+`inspect columns` ranks columns by compressed bytes. `Share` is that column's
+slice of the file, `Compression` is the named `Codec`'s effect, `Encoding` is
+what its data pages use with its dictionary's cardinality, and `Unencoded` is
+what the values occupy with no encoding at all:
 
 ```
-+------+---------+------------+------------+--------------+-----------+--------+---------+
-| Rank | Column  | Type       | Compressed | Uncompressed | Unencoded | Ratio  | # Pages |
-+------+---------+------------+------------+--------------+-----------+--------+---------+
-|    1 | payload | BYTE_ARRAY |   78.4 KiB |    120.0 KiB | 410.0 KiB |  65.3% |      10 |
-|    2 |      id |      INT64 |    2.1 KiB |      2.1 KiB |         - | 100.0% |       - |
-+------+---------+------------+------------+--------------+-----------+--------+---------+
++------+---------+------------+-------+------------+-------+-------------+----------------+-----------+---------+
+| Rank | Column  | Type       | Codec | Compressed | Share | Compression | Encoding       | Unencoded | # Pages |
++------+---------+------------+-------+------------+-------+-------------+----------------+-----------+---------+
+|    1 | payload | BYTE_ARRAY |  ZSTD |   78.4 KiB | 78.9% |       65.3% | PLAIN+DICT 92% | 410.0 KiB |      10 |
+|    2 |      id |      INT64 |  ZSTD |    2.1 KiB |  2.1% |      100.0% |          PLAIN | 390.6 KiB |       - |
++------+---------+------------+-------+------------+-------+-------------+----------------+-----------+---------+
 ```
 
 The rank-1 column is your scan cost. Then check _why_ it is large: a `PLAIN`
-encoding where `RLE_DICT` would dominate, or no compression (`UNCOMPRESSED` in
-`inspect rowgroups`).
+encoding where `DICT` would dominate, a `PLAIN+DICT` fallback, a `DICT` at high
+cardinality, or no compression (`UNCOMPRESSED` in `inspect rowgroups`).
 
 `--column PATH` switches to per-row-group detail for one column, followed by its
 repetition and definition level histograms with each level named after the schema
@@ -219,11 +241,11 @@ hardwood inspect columns -f FILE --column order.tags.list.element
 ```
 order.tags.list.element  BYTE_ARRAY / STRING  max def 3  max rep 1
 
-+----+-----------+---------+-----------+-----------+---------+-----------+------------------+
-| RG | Values    | Nulls   | Records   | Present   | Fan-out | Unencoded | Size stats       |
-+----+-----------+---------+-----------+-----------+---------+-----------+------------------+
-|  0 | 6,488,062 | 196,606 | 1,048,576 | 6,291,456 |    6.19 |   66.0 MB | chunk + 96 pages |
-+----+-----------+---------+-----------+-----------+---------+-----------+------------------+
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
+| RG | Values    | Nulls   | Records   | Present   | Fan-out | Codec | Compressed | Compression | Encoding   | Unencoded |
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
+|  0 | 6,488,062 | 196,606 | 1,048,576 | 6,291,456 |    6.19 |  ZSTD |   61.7 MiB |       33.5% | PLAIN+DICT |  66.0 MiB |
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
 
 Definition levels (all row groups, max 3)
   0  tags null                52,428    0.8% ▏

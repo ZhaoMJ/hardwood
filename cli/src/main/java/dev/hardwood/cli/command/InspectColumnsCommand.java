@@ -8,12 +8,13 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.aesh.command.Command;
 import org.aesh.command.CommandDefinition;
@@ -23,26 +24,24 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.Encodings;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
-import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.metadata.SizeStatistics;
-import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-@CommandDefinition(name = "columns", description = "Show compressed, uncompressed and unencoded byte sizes per column, ranked.", generateHelp = true)
+@CommandDefinition(name = "columns", description = "Rank columns by size, with each column's share of the file, its compression and its unencoded size.", generateHelp = true)
 public class InspectColumnsCommand implements Command<CommandInvocation> {
 
     /// Fixed render width for the level blocks. The output is meant to be
@@ -76,7 +75,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 if (column != null) {
                     return printColumnDetail(metadata, reader.getFileSchema(), inputFile);
                 }
-                List<ColumnSize> sizes = aggregateSizes(metadata, inputFile);
+                List<ColumnSize> sizes = aggregateSizes(metadata, reader.getFileSchema(), inputFile);
                 sizes.sort(Comparator.comparingLong(ColumnSize::compressed).reversed());
                 printRanked(sizes);
             }
@@ -107,11 +106,11 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
             return CommandResult.FAILURE;
         }
 
-        System.out.println();
         System.out.println(header(columnSchema));
         System.out.println();
 
         List<String[]> rows = new ArrayList<>();
+        List<String> mismatches = new ArrayList<>();
         List<List<LevelSummary.LevelRow>> definitionLevels = new ArrayList<>();
         List<List<LevelSummary.LevelRow>> repetitionLevels = new ArrayList<>();
         for (int rg = 0; rg < metadata.rowGroups().size(); rg++) {
@@ -124,14 +123,22 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
             }
             LevelSummary summary = LevelSummary.of(schema, columnSchema, chunk.metaData());
             rows.add(detailRow(rg, chunk, summary, inputFile));
-            if (summary != null) {
-                definitionLevels.add(summary.definitionLevels());
-                repetitionLevels.add(summary.repetitionLevels());
+            if (summary.mismatch() != null) {
+                mismatches.add(Fmt.fmt("RG #%d  declared vs actual: %s", rg, summary.mismatch()));
             }
+            definitionLevels.add(summary.definitionLevels());
+            repetitionLevels.add(summary.repetitionLevels());
         }
         System.out.println(RowTable.renderTable(
-                new String[]{"RG", "Values", "Nulls", "Records", "Present", "Fan-out", "Unencoded", "Size stats"},
+                new String[]{"RG", "Values", "Nulls", "Records", "Present", "Fan-out",
+                        "Codec", "Compressed", "Compression", "Encoding", "Unencoded"},
                 rows));
+
+        // The consistency check runs on both surfaces. `dive` paints it red;
+        // here it is the ⚠ and the wording alone, under the rows it refers to.
+        for (String mismatch : mismatches) {
+            System.out.println("⚠ " + mismatch);
+        }
 
         String scope = rowGroup != null ? "RG #" + rowGroup : "all row groups";
         printLevelBlock("Definition levels", scope, columnSchema.maxDefinitionLevel(),
@@ -157,59 +164,43 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
 
     private String[] detailRow(int rg, ColumnChunk chunk, LevelSummary summary, InputFile inputFile) {
         ColumnMetaData cmd = chunk.metaData();
-        Statistics statistics = cmd.statistics();
+        long nulls = summary.nullCount(cmd.statistics());
         return new String[]{
                 String.valueOf(rg),
                 Fmt.fmt("%,d", cmd.numValues()),
-                statistics != null && statistics.nullCount() != null
-                        ? Fmt.fmt("%,d", statistics.nullCount())
-                        : "-",
-                summary != null && summary.maxRepetitionLevel() > 0 && summary.hasRecords()
-                        ? Fmt.fmt("%,d", summary.records())
-                        : "-",
-                summary != null && summary.maxDefinitionLevel() > 0 && summary.hasPresentValues()
-                        ? Fmt.fmt("%,d", summary.presentValues())
-                        : "-",
-                summary != null && summary.maxRepetitionLevel() > 0 && summary.hasAvgFanOut()
-                        ? Fmt.fmt("%.2f", summary.avgFanOut())
-                        : "-",
-                summary != null && summary.hasUnencoded()
+                nulls >= 0 ? Fmt.fmt("%,d", nulls) : "-",
+                // Printed wherever the value is known, including where it
+                // follows from the column's shape rather than a histogram. The
+                // column occupies its width either way, and a reader — or a
+                // parser — should not have to know that a non-repeated column
+                // has one value per record to reconstruct the number.
+                summary.hasRecords() ? Fmt.fmt("%,d", summary.records()) : "-",
+                summary.hasPresentValues() ? Fmt.fmt("%,d", summary.presentValues()) : "-",
+                summary.hasAvgFanOut() ? Fmt.fmt("%.2f", summary.avgFanOut()) : "-",
+                cmd.codec().name(),
+                Sizes.format(cmd.totalCompressedSize()),
+                Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "-"),
+                Encodings.label(Encodings.dataPages(cmd),
+                        Encodings.dictionaryEntries(chunk, inputFile),
+                        dictionaryDenominator(summary, cmd), "-"),
+                summary.hasUnencoded()
                         ? Sizes.format(summary.unencodedBytes())
-                        : "-",
-                coverage(chunk, summary, inputFile)
+                        : "-"
         };
     }
 
     /// How much of the chunk the file describes: the chunk-level statistics
-    /// always, and the per-page copies in the column index when it has them.
-    private static String coverage(ColumnChunk chunk, LevelSummary summary, InputFile inputFile) {
-        if (summary == null) {
-            return "-";
-        }
-        ColumnIndex columnIndex = readColumnIndex(chunk, inputFile);
-        if (columnIndex == null
-                || (columnIndex.definitionLevelHistograms() == null
-                        && columnIndex.repetitionLevelHistograms() == null)) {
-            return "chunk only";
-        }
-        int pages = countPages(chunk, inputFile);
-        return pages >= 0
-                ? Fmt.fmt("chunk + %,d page%s", pages, pages == 1 ? "" : "s")
-                : "chunk + pages";
-    }
-
-    private static ColumnIndex readColumnIndex(ColumnChunk chunk, InputFile inputFile) {
-        Long offset = chunk.columnIndexOffset();
-        Integer length = chunk.columnIndexLength();
+    /// always, and the per-page copies when the page index carries them. Both
+    /// indexes count — the histograms live in the column index and the
+    /// unencoded sizes in the offset index.
+    ///
+    private static OffsetIndex readOffsetIndex(ColumnChunk chunk, InputFile inputFile) throws IOException {
+        Long offset = chunk.offsetIndexOffset();
+        Integer length = chunk.offsetIndexLength();
         if (offset == null || length == null || length <= 0) {
             return null;
         }
-        try {
-            return ColumnIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
-        }
-        catch (IOException e) {
-            return null;
-        }
+        return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
     }
 
     private String header(ColumnSchema columnSchema) {
@@ -241,7 +232,8 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         return null;
     }
 
-    private static List<ColumnSize> aggregateSizes(FileMetaData metadata, InputFile inputFile) {
+    private static List<ColumnSize> aggregateSizes(FileMetaData metadata, FileSchema schema,
+                                                   InputFile inputFile) {
         Map<String, ColumnSize> byColumn = new LinkedHashMap<>();
 
         for (RowGroup rg : metadata.rowGroups()) {
@@ -249,24 +241,47 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 ColumnMetaData cmd = cc.metaData();
                 String path = Sizes.columnPath(cmd);
                 int pageCount = countPages(cc, inputFile);
-                long unencoded = unencodedSize(cmd);
+                // One summary per chunk serves both the unencoded size and the
+                // dictionary's denominator. A column is reported as a whole
+                // only if every one of its chunks yields a figure: a partial
+                // sum reads as a real total and understates it.
+                LevelSummary summary = LevelSummary.of(schema, schema.getColumn(cmd.pathInSchema()), cmd);
+                long unencoded = summary.hasUnencoded() ? summary.unencodedBytes() : -1;
+                long entries = Encodings.dictionaryEntries(cc, inputFile);
+                long denominator = dictionaryDenominator(summary, cmd);
                 ColumnSize existing = byColumn.get(path);
                 if (existing == null) {
                     byColumn.put(path, new ColumnSize(path, cmd.type().name(), cmd.codec().name(),
                             cmd.totalCompressedSize(), cmd.totalUncompressedSize(), pageCount, pageCount >= 0,
-                            Math.max(unencoded, 0), unencoded >= 0));
+                            Math.max(unencoded, 0), unencoded >= 0,
+                            new TreeSet<>(Encodings.dataPages(cmd)),
+                            Math.max(entries, 0), entries >= 0, denominator));
                 }
                 else {
                     int combinedPages = (existing.pageCountAvailable() && pageCount >= 0)
                             ? existing.pageCount() + pageCount
                             : -1;
+                    // The union across row groups: a dictionary the writer
+                    // abandoned in one of them is a property of the column as
+                    // the file stores it, and this is the table a reader scans
+                    // to decide which column to look at more closely.
+                    existing.encodings().addAll(Encodings.dataPages(cmd));
                     byColumn.put(path, new ColumnSize(path, existing.type(), existing.codec(),
                             existing.compressed() + cmd.totalCompressedSize(),
                             existing.uncompressed() + cmd.totalUncompressedSize(),
                             combinedPages,
                             existing.pageCountAvailable() && pageCount >= 0,
                             existing.unencoded() + Math.max(unencoded, 0),
-                            existing.unencodedAvailable() && unencoded >= 0));
+                            existing.unencodedAvailable() && unencoded >= 0,
+                            existing.encodings(),
+                            // Each row group holds its own dictionary, so the
+                            // file-wide reading is the entries all of them hold
+                            // against all the values they cover — not an average
+                            // of the per-chunk shares, which would weight a small
+                            // row group like a large one.
+                            existing.dictionaryEntries() + Math.max(entries, 0),
+                            existing.dictionaryEntriesAvailable() && entries >= 0,
+                            existing.dictionaryDenominator() + denominator));
                 }
             }
         }
@@ -274,47 +289,55 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         return new ArrayList<>(byColumn.values());
     }
 
-    /// The chunk's unencoded `BYTE_ARRAY` size, or -1 when the writer records
-    /// none. A column is only reported as a whole if every one of its chunks
-    /// has the field: a partial sum reads as a real total and understates it.
-    private static long unencodedSize(ColumnMetaData cmd) {
-        SizeStatistics sizeStatistics = cmd.sizeStatistics();
-        if (sizeStatistics == null || sizeStatistics.unencodedByteArrayDataBytes() == null) {
-            return -1;
-        }
-        return sizeStatistics.unencodedByteArrayDataBytes();
+    /// What the dictionary could hold an entry for. Nulls never reach a
+    /// dictionary, so the present-value count is the honest denominator where
+    /// it is known; a nullable column measured against `num_values` would
+    /// understate its cardinality and hide a dictionary that is a verbatim
+    /// copy of every value it holds.
+    private static long dictionaryDenominator(LevelSummary summary, ColumnMetaData cmd) {
+        return summary.hasPresentValues() ? summary.presentValues() : cmd.numValues();
     }
 
     private static int countPages(ColumnChunk cc, InputFile inputFile) {
-        Long offset = cc.offsetIndexOffset();
-        Integer length = cc.offsetIndexLength();
-        if (offset == null || length == null || length <= 0) {
-            return -1;
-        }
         try {
-            ByteBuffer buffer = inputFile.readRange(offset, length);
-            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(buffer));
-            return oi.pageLocations().size();
+            OffsetIndex oi = readOffsetIndex(cc, inputFile);
+            return oi != null ? oi.pageLocations().size() : -1;
         }
         catch (IOException e) {
             return -1;
         }
     }
 
+    /// The ranked table answers "which column is this file, and what is the
+    /// lever". `Share` is that first question stated rather than left as
+    /// arithmetic over the `Compressed` column, and `Compression` names what
+    /// its percentage divides — `Uncompressed` is dropped because it was only
+    /// present as that percentage's other operand and follows from the two.
+    /// `Encoding` is here rather than only under `--column` because the reason
+    /// to scan this table is to pick the column worth drilling into, and a
+    /// dictionary the writer abandoned is one of the few things that decides it.
     private void printRanked(List<ColumnSize> sizes) {
-        String[] headers = {"Rank", "Column", "Type", "Compressed", "Uncompressed", "Unencoded", "Ratio", "# Pages"};
+        String[] headers = {"Rank", "Column", "Type", "Codec", "Compressed", "Share", "Compression",
+                "Encoding", "Unencoded", "# Pages"};
+        long totalCompressed = 0;
+        for (ColumnSize s : sizes) {
+            totalCompressed += s.compressed();
+        }
         List<String[]> rows = new ArrayList<>();
         for (int i = 0; i < sizes.size(); i++) {
             ColumnSize s = sizes.get(i);
-            double ratio = s.uncompressed() > 0 ? (100.0 * s.compressed() / s.uncompressed()) : 100.0;
             rows.add(new String[]{
                     String.valueOf(i + 1),
                     s.path(),
                     s.type(),
+                    s.codec(),
                     Sizes.format(s.compressed()),
-                    Sizes.format(s.uncompressed()),
+                    totalCompressed > 0 ? Fmt.fmt("%.1f%%", 100.0 * s.compressed() / totalCompressed) : "-",
+                    Sizes.compression(s.compressed(), s.uncompressed(), "-"),
+                    Encodings.label(s.encodings(),
+                            s.dictionaryEntriesAvailable() ? s.dictionaryEntries() : -1,
+                            s.dictionaryDenominator(), "-"),
                     s.unencodedAvailable() ? Sizes.format(s.unencoded()) : "-",
-                    Fmt.fmt("%.1f%%", ratio),
                     s.pageCountAvailable() ? String.valueOf(s.pageCount()) : "-"
             });
         }
@@ -323,6 +346,8 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
 
     private record ColumnSize(String path, String type, String codec, long compressed, long uncompressed,
                               int pageCount, boolean pageCountAvailable, long unencoded,
-                              boolean unencodedAvailable) {
+                              boolean unencodedAvailable, Set<Encoding> encodings,
+                              long dictionaryEntries, boolean dictionaryEntriesAvailable,
+                              long dictionaryDenominator) {
     }
 }

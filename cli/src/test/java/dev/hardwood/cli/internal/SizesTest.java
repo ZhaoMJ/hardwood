@@ -82,4 +82,20 @@ class SizesTest {
         assertThat(Sizes.dualFormat(422)).isEqualTo("422 B");
         assertThat(Sizes.dualFormat(1_023)).isEqualTo("1023 B");
     }
+
+    /// Compression is the share of the uncompressed size that survived, not
+    /// the factor it divided by — the one form every surface renders.
+    @Test
+    void compressionIsThePercentageOfTheUncompressedSize() {
+        assertThat(Sizes.compression(1_000, 10_000, "-")).isEqualTo("10.0%");
+        assertThat(Sizes.compression(500, 500, "-")).isEqualTo("100.0%");
+    }
+
+    /// An uncompressed size of zero is nothing to divide by, and the two
+    /// surfaces spell absence differently.
+    @Test
+    void compressionRendersThePlaceholderWithNothingToDivideBy() {
+        assertThat(Sizes.compression(0, 0, "-")).isEqualTo("-");
+        assertThat(Sizes.compression(10, 0, "—")).isEqualTo("—");
+    }
 }

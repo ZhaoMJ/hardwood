@@ -13,7 +13,6 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
-import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -86,9 +85,6 @@ public final class ColumnChunksScreen {
         for (int i = window.start(); i < window.end(); i++) {
             ColumnChunk cc = rg.columns().get(i);
             ColumnMetaData cmd = cc.metaData();
-            double ratio = cmd.totalCompressedSize() == 0
-                    ? 0.0
-                    : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
             dev.hardwood.metadata.LogicalType logical = model.schema().getColumn(i).logicalType();
             rows.add(Row.from(
                     String.valueOf(i),
@@ -97,10 +93,10 @@ public final class ColumnChunksScreen {
                     logical != null ? logical.toString() : "—",
                     cmd.codec().name(),
                     Sizes.format(cmd.totalCompressedSize()),
-                    Fmt.fmt("%.1f×", ratio),
+                    Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "—"),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no"));
         }
-        Row header = Row.from("#", "Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
+        Row header = Row.from("#", "Column", "Type", "Logical", "Codec", "Compressed", "Compression", "Dict")
                 .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " column chunks "
@@ -119,7 +115,7 @@ public final class ColumnChunksScreen {
                         new Constraint.Length(18),
                         new Constraint.Length(10),
                         new Constraint.Length(12),
-                        new Constraint.Length(8),
+                        new Constraint.Length(11),
                         new Constraint.Length(6))
                 .columnSpacing(2)
                 .block(block)

@@ -88,10 +88,18 @@ public sealed interface ScreenState {
     /// `levels` controls whether the repetition- and definition-level
     /// histograms are appended to the facts pane — toggled with `l`. Off by
     /// default: the derived rows above them summarise the same data in a few
-    /// lines, and the pane does not scroll.
+    /// lines, so the raw buckets are a deliberate step.
+    /// `scrollTop` is the first facts-pane line rendered. The pane runs past
+    /// the bottom of an ordinary terminal on a nested column, so it scrolls
+    /// with the facts pane focused rather than dropping the tail.
     record ColumnChunkDetail(int rowGroupIndex, int columnIndex, Pane focus, int menuSelection,
-                              boolean logicalTypes, boolean levels)
+                              boolean logicalTypes, boolean levels, int scrollTop)
             implements ScreenState {
+        public ColumnChunkDetail(int rowGroupIndex, int columnIndex, Pane focus, int menuSelection,
+                                 boolean logicalTypes, boolean levels) {
+            this(rowGroupIndex, columnIndex, focus, menuSelection, logicalTypes, levels, 0);
+        }
+
         public enum Pane { FACTS, MENU }
     }
 
