@@ -20,6 +20,8 @@ import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 
 import dev.hardwood.avro.internal.AvroPlanNode;
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.reader.FileAwareRowReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -178,7 +180,7 @@ public class AvroRowReader implements AutoCloseable {
     /// @param node the plan node for the value's position
     /// @param location the value's position for a materialization failure
     /// @return the value as its Avro schema requires
-    private static Object rawToAvro(Object raw, AvroPlanNode node, ValueLocation location) {
+    private Object rawToAvro(Object raw, AvroPlanNode node, ValueLocation location) {
         return switch (node.kind()) {
             case UNSIGNED_INT32 -> Integer.toUnsignedLong(
                     requireValueType(raw, Integer.class, node, location));
@@ -301,7 +303,7 @@ public class AvroRowReader implements AutoCloseable {
     /// record is serialized through a `GenericDatumWriter`. A `FIXED_LEN_BYTE_ARRAY`
     /// column stores exactly `type_length` bytes per value, so a payload whose width
     /// does not match the declared `fixed` size is malformed and rejected.
-    private static GenericData.Fixed wrapFixed(byte[] bytes, AvroPlanNode node, ValueLocation location) {
+    private GenericData.Fixed wrapFixed(byte[] bytes, AvroPlanNode node, ValueLocation location) {
         Schema fixedSchema = node.avro();
         int size = fixedSchema.getFixedSize();
         if (bytes.length != size) {
@@ -311,14 +313,14 @@ public class AvroRowReader implements AutoCloseable {
         return new GenericData.Fixed(fixedSchema, bytes);
     }
 
-    private static <T> T requireValue(T value, AvroPlanNode node, ValueLocation location) {
+    private <T> T requireValue(T value, AvroPlanNode node, ValueLocation location) {
         if (value == null) {
             throw materializationFailure(node, location, null, "required non-null value");
         }
         return value;
     }
 
-    private static <T> T requireValueType(Object value, Class<T> expectedClass, AvroPlanNode node,
+    private <T> T requireValueType(Object value, Class<T> expectedClass, AvroPlanNode node,
             ValueLocation location) {
         if (!expectedClass.isInstance(value)) {
             throw materializationFailure(node, location, value,
@@ -327,11 +329,30 @@ public class AvroRowReader implements AutoCloseable {
         return expectedClass.cast(value);
     }
 
-    private static IllegalArgumentException materializationFailure(AvroPlanNode node,
+    private IllegalArgumentException materializationFailure(AvroPlanNode node,
             ValueLocation location, Object value, String detail) {
         String actualType = value == null ? "null" : value.getClass().getTypeName();
-        return new IllegalArgumentException("Cannot materialize " + location.description()
-                + " as Avro " + node.avro().getType() + ": actual Java value type " + actualType
+        return new IllegalArgumentException(filePrefix() + "Cannot materialize " + location.description()
+                + " as " + targetType(node) + ": actual Java value type " + actualType
                 + " (" + detail + ")");
+    }
+
+    /// Name the Avro type a value is being materialized as, adding the plan's kind
+    /// where the two differ. A `UINT_32` column is Avro `LONG` but is read as an
+    /// `Integer` and widened, so naming the Avro type alone makes the required Java
+    /// type look like a contradiction.
+    private static String targetType(AvroPlanNode node) {
+        String avroType = node.avro().getType().name();
+        String kind = node.kind().name();
+        return kind.equals(avroType) ? "Avro " + avroType : "Avro " + avroType + " (" + kind + ")";
+    }
+
+    /// The `[fileName] ` prefix the core readers put on their own exceptions, so a
+    /// failure in a multi-file read names the file the current row came from. Empty
+    /// when the underlying reader cannot name one.
+    private String filePrefix() {
+        return rowReader instanceof FileAwareRowReader fileAware
+                ? ExceptionContext.filePrefix(fileAware.currentFileName())
+                : "";
     }
 }

@@ -192,7 +192,7 @@ public final class AvroSchemaConverter {
     private AvroPlanNode convertList(SchemaNode.GroupNode listGroup, String path) {
         SchemaNode element = listGroup.getListElement();
         if (element == null) {
-            throw new IllegalArgumentException("LIST group '" + listGroup.name()
+            throw new IllegalArgumentException("LIST group '" + path
                     + "' has no element");
         }
         // The list column is only reached when it has a projected leaf; prune the
@@ -208,7 +208,7 @@ public final class AvroSchemaConverter {
         SchemaNode keyNode = mapGroup.getMapKey();
         SchemaNode valueNode = mapGroup.getMapValue();
         if (keyNode == null) {
-            throw new IllegalArgumentException("MAP group '" + mapGroup.name()
+            throw new IllegalArgumentException("MAP group '" + path
                     + "' must contain a repeated key/value group with a key");
         }
         requireAvroStringKey(keyNode, path);

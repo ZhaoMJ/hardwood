@@ -320,6 +320,42 @@ class AvroSchemaConverterTest {
         assertThat(plan.child(0).mapValue().kind()).isEqualTo(AvroPlanNode.Kind.NULL);
     }
 
+    /// A key-only map is still read key-first through `PqMap.Entry#getStringKey`, so the
+    /// key check must run before the missing value short-circuits conversion. With the two
+    /// in the other order this map converts to `map<null>` and only fails per value.
+    @Test
+    void rejectsKeyOnlyMapWhoseKeyIsNotAString() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement map = new SchemaElement("attributes", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, new LogicalType.MapType());
+        SchemaElement keyValue = new SchemaElement("key_value", null, null, RepetitionType.REPEATED,
+                1, null, null, null, null, null);
+        SchemaElement key = new SchemaElement("key", PhysicalType.INT32, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, null);
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, map, keyValue, key));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("attributes")
+                .hasMessageContaining("INT32");
+    }
+
+    /// Container rejections name the dotted path, so two same-named lists under different
+    /// structs stay distinguishable.
+    @Test
+    void namesTheDottedPathWhenANestedListHasNoElement() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement holder = new SchemaElement("holder", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement list = new SchemaElement("items", null, null, RepetitionType.OPTIONAL,
+                0, null, null, null, null, new LogicalType.ListType());
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, holder, list));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("holder.items");
+    }
+
     /// `list<null>` with an OPTIONAL element must produce `array<null>`, not
     /// `array<union [null, null]>`.
     @Test

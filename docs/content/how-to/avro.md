@@ -82,7 +82,7 @@ A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.
 
-Reader construction validates container schemas before acquiring the underlying row reader. It throws `IllegalArgumentException` when a LIST group has no discoverable element or a MAP group has no discoverable key; these malformed schemas cannot be materialized consistently with an Avro schema.
+Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the group's path when a projected `LIST` group has no element field, or a projected `MAP` group has no key field.
 
 ## Lifecycle
 

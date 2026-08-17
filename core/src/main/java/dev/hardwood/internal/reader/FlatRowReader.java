@@ -45,7 +45,7 @@ import dev.hardwood.schema.FileSchema;
 /// giving the JIT a single concrete class with monomorphic call sites. Supports all
 /// primitive types, logical type conversions (date, time, timestamp, decimal, UUID,
 /// string), and both name-based and index-based access.
-public final class FlatRowReader implements RowReader {
+public final class FlatRowReader implements FileAwareRowReader {
 
     /// Sentinel for "every leaf in the batch is present" — replaces the
     /// nullable validity reference on the hot path so the per-row check
@@ -702,6 +702,11 @@ public final class FlatRowReader implements RowReader {
     @Override
     public UUID getUuid(String name) {
         return getUuid(resolveIndex(name));
+    }
+
+    @Override
+    public String currentFileName() {
+        return currentFileName;
     }
 
     @Override

@@ -39,7 +39,7 @@ import dev.hardwood.schema.SchemaNode;
 /// repetition levels, record offsets) and delegates typed accessors to
 /// [NestedBatchDataView]. Index structures are pre-computed by the
 /// [NestedColumnWorker] drain thread before publishing.
-public final class NestedRowReader implements RowReader {
+public final class NestedRowReader implements FileAwareRowReader {
 
     private final BatchExchange<NestedBatch>[] exchanges;
     private final NestedColumnWorker[] columnWorkers;
@@ -52,6 +52,8 @@ public final class NestedRowReader implements RowReader {
 
     // Iteration state
     private NestedBatch[] previousBatches;
+    /// File name from the current batch — used for exception enrichment
+    private String currentFileName;
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
@@ -274,12 +276,15 @@ public final class NestedRowReader implements RowReader {
         batchSize = batches[0].recordCount;
 
         // Index structures are pre-computed by the drain — just assemble the view
-        dataView.setBatchData(batches, columnSchemas, batches[0].fileName);
+        currentFileName = batches[0].fileName;
+        dataView.setBatchData(batches, columnSchemas, currentFileName);
         rowIndex = -1;
         return true;
     }
 
     // ==================== Accessors (delegate to NestedBatchDataView) ====================
+
+    @Override public String currentFileName() { return currentFileName; }
 
     @Override public boolean isNull(int i) { return dataView.isNull(i); }
     @Override public boolean isNull(String name) { return dataView.isNull(name); }

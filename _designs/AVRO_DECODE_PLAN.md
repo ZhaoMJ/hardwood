@@ -98,9 +98,14 @@ accessors are checked for an unexpected null after the enclosing null guard. Fie
 map positions use typed accessors for logical and group kinds, while list elements use
 `PqList.get(index)` and validate its returned object. Physical kinds use raw accessors
 at all three positions and share the same type and fixed-width checks. Every mismatch
-throws an `IllegalArgumentException` naming the flat materialization position, Avro
-type, and actual Java value type. The location model is intentionally flat: nested
-failures name the innermost field, list element, or map value.
+throws an `IllegalArgumentException` naming the flat materialization position, the Avro
+type, and the actual Java value type. The Avro type is qualified with the plan's `Kind`
+where the two differ, so a `UINT_32` column reads as `Avro LONG (UNSIGNED_INT32)` rather
+than a `LONG` that inexplicably requires an `Integer`. The message carries the
+`[fileName] ` prefix the core readers use, read from the underlying reader through
+`FileAwareRowReader` so a multi-file read attributes the failure to one file. The
+location model is intentionally flat: nested failures name the innermost field, list
+element, or map value.
 
 Parquet `ENUM` materializes through the `STRING` kind. The Parquet annotation carries
 no declared symbol set, so materialization validates the Java representation as a

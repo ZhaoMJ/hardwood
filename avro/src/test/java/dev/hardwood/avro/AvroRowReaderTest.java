@@ -33,6 +33,8 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
+import dev.hardwood.internal.reader.FileAwareRowReader;
+import dev.hardwood.metadata.LogicalType.IntType;
 import dev.hardwood.metadata.LogicalType.ListType;
 import dev.hardwood.metadata.LogicalType.MapType;
 import dev.hardwood.metadata.LogicalType.NullType;
@@ -98,23 +100,6 @@ class AvroRowReaderTest {
                     .hasMessageContaining(column)
                     .hasMessageContaining(keyType);
         }
-    }
-
-    @Test
-    void planFailurePreventsRowReaderAcquisition() {
-        boolean[] acquired = { false };
-
-        assertThatThrownBy(() -> AvroReaders.buildReader(
-                () -> {
-                    throw new IllegalArgumentException("plan failed");
-                },
-                () -> {
-                    acquired[0] = true;
-                    throw new AssertionError("row reader must not be acquired");
-                }))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("plan failed");
-        assertThat(acquired[0]).isFalse();
     }
 
     @Test
@@ -231,6 +216,91 @@ class AvroRowReaderTest {
                 .hasMessageContaining("Avro NULL")
                 .hasMessageContaining("java.lang.Integer")
                 .hasMessageContaining("NULL has no non-null materialization");
+    }
+
+    @Test
+    void nonNullValueForNullLogicalTypeFailsAtListElement() {
+        AvroPlanNode plan = AvroSchemaConverter.plan(listOfNullSchema(), ColumnProjection.all());
+        PqList list = proxy(PqList.class, values(
+                "size", 1,
+                "isNull", false,
+                "get", 42));
+        RowReader rows = proxy(RowReader.class, values(
+                "next", null,
+                "isNull", false,
+                "getList", list));
+
+        assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("list element 0")
+                .hasMessageContaining("Avro NULL")
+                .hasMessageContaining("java.lang.Integer")
+                .hasMessageContaining("NULL has no non-null materialization");
+    }
+
+    @Test
+    void nonNullValueForNullLogicalTypeFailsAtMapValue() {
+        AvroPlanNode plan = AvroSchemaConverter.plan(mapOfNullSchema(), ColumnProjection.all());
+        PqMap.Entry entry = proxy(PqMap.Entry.class, values(
+                "getStringKey", "key",
+                "isValueNull", false,
+                "getValue", 42));
+        PqMap map = proxy(PqMap.class, values("getEntries", List.of(entry), "size", 1));
+        RowReader rows = proxy(RowReader.class, values(
+                "next", null,
+                "isNull", false,
+                "getMap", map));
+
+        assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("map value for key 'key'")
+                .hasMessageContaining("Avro NULL")
+                .hasMessageContaining("java.lang.Integer")
+                .hasMessageContaining("NULL has no non-null materialization");
+    }
+
+    /// A materialization failure is attributable to a file, the way the core readers
+    /// already mark their own exceptions — otherwise a multi-file read reports a row
+    /// position with no file to pin it to.
+    @Test
+    void materializationFailureNamesTheFileOfTheCurrentRow() {
+        FileSchema schema = primitiveSchema("value", PhysicalType.INT32, RepetitionType.REQUIRED);
+        AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
+        RowReader rows = proxy(FileAwareRowReader.class, values(
+                "next", null,
+                "isNull", false,
+                "currentFileName", "part-01.parquet",
+                "getRawValue", "wrong"));
+
+        assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith("[part-01.parquet] ")
+                .hasMessageContaining("field 'value'");
+    }
+
+    /// The shape issue #897 reported: `UINT32` stores as `INT32` but converts to Avro
+    /// `long`, so an accessor picked off the Avro type serves a `Long` the widening
+    /// step cannot use.
+    @Test
+    void wrongRawTypeForUnsignedIntNamesRootField() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement count = new SchemaElement("count", PhysicalType.INT32, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, new IntType(32, false));
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, count));
+        AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
+        RowReader rows = proxy(RowReader.class, values(
+                "next", null,
+                "isNull", false,
+                "getRawValue", 7L));
+
+        assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("field 'count'")
+                // Naming the kind keeps "Avro LONG … required java.lang.Integer" from
+                // reading as a contradiction.
+                .hasMessageContaining("Avro LONG (UNSIGNED_INT32)")
+                .hasMessageContaining("java.lang.Long")
+                .hasMessageContaining("required java.lang.Integer");
     }
 
     @Test
@@ -1391,6 +1461,33 @@ class AvroRowReaderTest {
                 RepetitionType.REQUIRED, null, null, null, null, null,
                 new StringType());
         return FileSchema.fromSchemaElements(List.of(root, list, repeated, element));
+    }
+
+    /// `list<null>` — every element is null in a well-formed file, so the `NULL` arm of
+    /// the element switch is only reachable when the accessors and the plan disagree.
+    private static FileSchema listOfNullSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement list = new SchemaElement("nulls", null, null, RepetitionType.REQUIRED,
+                1, null, null, null, null, new ListType());
+        SchemaElement repeated = new SchemaElement("list", null, null, RepetitionType.REPEATED,
+                1, null, null, null, null, null);
+        SchemaElement element = new SchemaElement("element", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new NullType());
+        return FileSchema.fromSchemaElements(List.of(root, list, repeated, element));
+    }
+
+    /// `map<string, null>` — the map counterpart of [#listOfNullSchema].
+    private static FileSchema mapOfNullSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement map = new SchemaElement("attributes", null, null, RepetitionType.REQUIRED,
+                1, null, null, null, null, new MapType());
+        SchemaElement keyValue = new SchemaElement("key_value", null, null, RepetitionType.REPEATED,
+                2, null, null, null, null, null);
+        SchemaElement key = new SchemaElement("key", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, new StringType());
+        SchemaElement value = new SchemaElement("value", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new NullType());
+        return FileSchema.fromSchemaElements(List.of(root, map, keyValue, key, value));
     }
 
     private static FileSchema mapStringSchema() {

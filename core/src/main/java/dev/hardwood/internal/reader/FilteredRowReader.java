@@ -26,7 +26,7 @@ import dev.hardwood.row.PqVariant;
 /// constructed with a positive `maxMatches`, also caps the number of matching
 /// rows returned (SQL `LIMIT` over the filtered relation); [ColumnWorker#UNLIMITED]
 /// disables the cap.
-public final class FilteredRowReader implements RowReader {
+public final class FilteredRowReader implements FileAwareRowReader {
 
     private final RowReader delegate;
     private final RowMatcher matcher;
@@ -71,6 +71,13 @@ public final class FilteredRowReader implements RowReader {
     }
 
     // ==================== Delegation ====================
+
+    /// The filter runs over the delegate's rows, so the file being served is the
+    /// delegate's. Unknown when it cannot name one — the two readers this wraps both can.
+    @Override
+    public String currentFileName() {
+        return delegate instanceof FileAwareRowReader fileAware ? fileAware.currentFileName() : null;
+    }
 
     @Override public int getInt(int i) { return delegate.getInt(i); }
     @Override public int getInt(String name) { return delegate.getInt(name); }
