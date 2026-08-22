@@ -10,6 +10,7 @@ package dev.hardwood.cli.dive.internal;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.Version;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;

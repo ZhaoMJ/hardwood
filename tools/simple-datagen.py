@@ -34,6 +34,7 @@ from parquet_annotators import (
     collapse_list_to_unannotated_repeated,
     collapse_list_of_structs_to_unannotated_repeated_group,
     collapse_list_of_lists_to_legacy_two_level,
+    clear_key_value_metadata_value,
     strip_converted_type,
     corrupt_data_page_offset_negative,
     falsify_int64_row_group_minmax,
@@ -1901,9 +1902,10 @@ print("  - Also contains ARROW:schema metadata from pyarrow")
 
 # ===== CLI `info` command key-value metadata test file =====
 # Mirrors what real files carry in practice — Arrow's own embedded schema plus
-# the row-metadata JSON Spark and pandas write — alongside two synthetic edge
-# cases (a value short enough to print in full, and an empty one) that real
-# writers don't reliably produce on demand.
+# the row-metadata JSON Spark and pandas write — alongside the edge cases real
+# writers don't reliably produce on demand: a value short enough to print in
+# full, an empty one, a pair straddling the truncation boundary, and an entry
+# with no value field at all.
 
 cli_info_kv_schema = pa.schema([
     ('id', pa.int64(), False),
@@ -1916,7 +1918,7 @@ cli_info_kv_table = pa.table({
 }, schema=cli_info_kv_schema)
 
 # JSON is minified (no spaces) so the truncation cutoff below is easy to compute:
-# both are well past MAX_VALUE_WIDTH (60 chars) in InfoCommand.
+# both are well past MAX_VALUE_WIDTH (60 cells) in InfoCommand.
 cli_info_kv_pandas_metadata = (
     b'{"index_columns":["__index_level_0__"],"column_indexes":[{"name":null,'
     b'"field_name":null,"pandas_type":"unicode","numpy_type":"object","metadata":'
@@ -1931,9 +1933,22 @@ cli_info_kv_spark_metadata = (
     b'{"name":"amount","type":"double","nullable":true,"metadata":{}}]}'
 )
 
+# A value of exactly MAX_VALUE_WIDTH cells prints in full; one cell more is cut
+# short. The pair pins the boundary, which entries far away from it can't.
+cli_info_kv_at_limit = b'b' * 60
+cli_info_kv_over_limit = b'c' * 61
+
+# Values are arbitrary writer-supplied bytes: a raw newline would break the
+# column alignment and a raw escape sequence would drive the reader's terminal.
+cli_info_kv_control_chars = b'line1\nline2\x1b[31m'
+
 cli_info_kv_metadata = {
     b'short.key': b'1.2.3',
     b'empty.key': b'',
+    b'absent.key': b'',
+    b'at.limit.key': cli_info_kv_at_limit,
+    b'over.limit.key': cli_info_kv_over_limit,
+    b'control.key': cli_info_kv_control_chars,
     b'pandas': cli_info_kv_pandas_metadata,
     b'org.apache.spark.sql.parquet.row.metadata': cli_info_kv_spark_metadata,
 }
@@ -1945,12 +1960,18 @@ pq.write_table(cli_info_kv_table, cli_info_kv_path,
                use_dictionary=False,
                compression=None,
                data_page_version='1.0')
-# PyArrow appends its own ARROW:schema entry alongside the 4 custom ones above,
-# for 5 total — left in place (rather than stripped via remove_key_value_metadata_entry)
-# since it's exactly the kind of entry `info` needs to show a realistic reader.
+# PyArrow appends its own ARROW:schema entry alongside the 8 custom ones above,
+# for 9 total — left in place since it's exactly the kind of entry `info` needs
+# to show a realistic reader.
+# `KeyValue.value` is optional in parquet.thrift, but no writer will omit it on
+# request, so `absent.key` is written with an empty value and stripped of the
+# field afterwards.
+clear_key_value_metadata_value(cli_info_kv_path, 'absent.key')
 
 print("\nGenerated cli_info_kv_metadata_test.parquet:")
-print("  - short.key=1.2.3 (no truncation), empty.key='' (0 bytes)")
+print("  - short.key=1.2.3 (no truncation), empty.key='' (0 bytes), absent.key (no value field)")
+print("  - at.limit.key / over.limit.key: 60 and 61 chars, straddling the truncation boundary")
+print("  - control.key: embedded newline and ANSI escape")
 print("  - pandas / org.apache.spark.sql.parquet.row.metadata: realistic JSON (truncated)")
 print("  - plus PyArrow's own ARROW:schema entry")
 

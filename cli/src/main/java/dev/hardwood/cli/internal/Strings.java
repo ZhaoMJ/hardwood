@@ -5,16 +5,16 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.cli.dive.internal;
+package dev.hardwood.cli.internal;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import dev.tamboui.text.CharWidth;
 
-/// Small string helpers shared by `dive` screens. Kept here so the
-/// truncation/padding behavior — including the ellipsis character — stays
-/// consistent across every screen that draws columnar content.
+/// Small string helpers shared by every screen and command that draws columnar
+/// content. Kept here so the truncation/padding behavior — including the
+/// ellipsis character — stays consistent across all of them.
 public final class Strings {
 
     /// The character used to mark visually-truncated content. Centralised
@@ -24,13 +24,20 @@ public final class Strings {
     private Strings() {
     }
 
-    /// Pads `s` on the right with spaces to at least `width` columns. Strings
+    /// Returns the number of terminal cells `s` occupies: wide glyphs (CJK,
+    /// emoji) count double and combining marks count zero.
+    public static int width(String s) {
+        return CharWidth.of(s);
+    }
+
+    /// Pads `s` on the right with spaces to at least `width` cells. Strings
     /// already at or above `width` are returned unchanged (no truncation).
     public static String padRight(String s, int width) {
-        if (s.length() >= width) {
+        int actual = width(s);
+        if (actual >= width) {
             return s;
         }
-        return s + " ".repeat(width - s.length());
+        return s + " ".repeat(width - actual);
     }
 
     /// Truncates `s` from the left so the suffix stays visible (e.g. for
@@ -41,6 +48,21 @@ public final class Strings {
             return s;
         }
         return ELLIPSIS + s.substring(s.length() - maxWidth + 1);
+    }
+
+    /// Truncates `s` from the right so the prefix stays visible, marking the
+    /// cut with a trailing [#ELLIPSIS]. Strings within `maxWidth` are returned
+    /// unchanged; the ellipsis counts towards `maxWidth`, so the result never
+    /// occupies more than `maxWidth` cells.
+    ///
+    /// Cutting measures display cells rather than `char`s, so the result never
+    /// ends in half a surrogate pair and a wide glyph never straddles the
+    /// boundary.
+    public static String truncateRight(String s, int maxWidth) {
+        if (width(s) <= maxWidth) {
+            return s;
+        }
+        return CharWidth.substringByWidth(s, maxWidth - 1) + ELLIPSIS;
     }
 
     /// Word-wraps `value` so each returned line fits within `width` cells.

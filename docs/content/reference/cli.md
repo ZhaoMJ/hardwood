@@ -120,21 +120,31 @@ optional double total__usd_ = 1;
 
 `hardwood info` prints a file's key-value metadata below the size summary, one
 line per entry: the key, its value's byte length, and the value itself. Values
-longer than 60 characters are truncated with a trailing `…`, since these
-routinely carry kilobytes of embedded JSON (e.g. `org.apache.spark.sql.parquet.row.metadata`) or a base64-encoded Arrow IPC schema (`ARROW:schema`):
+wider than 60 columns are truncated with a trailing `…`, since these routinely
+carry kilobytes of embedded JSON (e.g.
+`org.apache.spark.sql.parquet.row.metadata`) or a base64-encoded Arrow IPC
+schema (`ARROW:schema`). Control characters in a value print as `·`:
 
 ```
-Key/Value Metadata (2):
-  ARROW:schema                               4.1 KiB  /////5AEAABAAAAAAAAKAAwABgAFAAgACgAAAAABBAAM…
-  org.apache.spark.sql.parquet.row.metadata  1.8 KiB  {"type":"struct","fields":[{"name":"order_id"…
+Key/Value Metadata (3):
+  ARROW:schema                               4.1 KiB  /////5AEAABAAAAAAAAKAAwABgAFAAgACgAAAAABBAA…
+  org.apache.spark.sql.parquet.row.metadata  1.8 KiB  {"type":"struct","fields":[{"name":"order_i…
+  writer.build                                     —
 ```
 
-Pass `--kv-key <name>` to print one entry's value in full, untruncated, with no
-other output — safe to pipe into another tool:
+An entry may carry a key with no value at all, which is distinct from a key
+whose value is empty. The size column tells the two apart: `—` for a value that
+is absent, `0 B` for one that is present and empty.
+
+Pass `--kv-key <name>` to print one entry's value in full, untruncated and with
+no substitutions, and no other output — safe to pipe into another tool:
 
 ```shell
 hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
 ```
+
+`--kv-key` exits non-zero if the file has no entry under that name, or if the
+entry has no value.
 
 ## Interactive exploration (`dive`)
 
