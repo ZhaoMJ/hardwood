@@ -10,6 +10,7 @@ package dev.hardwood.cli.dive;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -25,8 +26,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
+import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
 import dev.hardwood.cli.dive.internal.Keys;
+import dev.hardwood.cli.dive.internal.OverviewScreen;
+import dev.hardwood.cli.dive.internal.PagesScreen;
+import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
+import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.hardwood.cli.internal.Version;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -268,7 +274,7 @@ class DiveRenderTest {
     }
 
     @Test
-    void dataPreviewScalarOnlyRecordIsCursorlessAndScrollsWithPageKeys() {
+    void dataPreviewScalarOnlyRecordStillWalksAndPages() {
         List<String> names = numberedValues("f", 30);
         List<String> values = numberedValues("v", 30);
         ScreenState.DataPreview state = openModal(names, values, values);
@@ -276,37 +282,35 @@ class DiveRenderTest {
         Rect area = new Rect(0, 0, 100, 24);
 
         RenderHarness.RenderedFrame first = RenderHarness.render(area, state, model);
-        assertThat(first.contains("▶f"))
-                .as("nothing in the record can be expanded, so no cursor is drawn")
+        assertThat(first.contains("▶ f"))
+                .as("nothing in the record can be expanded, so no row is marked")
                 .isFalse();
         assertThat(first.contains("Enter expand"))
                 .as("the hint does not offer an expansion that cannot happen")
                 .isFalse();
         assertThat(first.contains("e/c all")).isFalse();
-        assertThat(first.contains("↑↓ field"))
-                .as("there is no expandable field to step to")
-                .isFalse();
-        assertThat(first.contains("PgDn/PgUp scroll"))
-                .as("the body overflows, so paging is what reaches the rest")
+        assertThat(first.contains("↑↓ move"))
+                .as("the cursor walks the body whether or not Enter does anything")
                 .isTrue();
+        assertThat(first.contains("PgDn/PgUp page")).isTrue();
 
-        assertThat(DataPreviewScreen.handle(key(KeyCode.UP), model, stack)).isFalse();
-        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isFalse();
-
-        assertThat(DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack)).isTrue();
-        ScreenState.DataPreview scrolled = (ScreenState.DataPreview) stack.top();
-        assertThat(RenderHarness.render(area, scrolled, model).contains("f29"))
-                .as("PgDn reaches the tail of a record no cursor can walk")
+        assertThat(DataPreviewScreen.handle(key(KeyCode.UP), model, stack))
+                .as("already at the top, but the key is still the cursor's")
                 .isTrue();
-        assertThat(DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack))
-                .as("already against the bottom")
-                .isFalse();
-        assertThat(DataPreviewScreen.handle(key(KeyCode.PAGE_UP), model, stack)).isTrue();
-        assertThat(((ScreenState.DataPreview) stack.top()).modalScroll()).isZero();
+        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
+        assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
+
+        assertThat(DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack)).isTrue();
+        ScreenState.DataPreview bottom = (ScreenState.DataPreview) stack.top();
+        assertThat(bottom.modalCursorLine()).isEqualTo(names.size() - 1);
+        assertThat(RenderHarness.render(area, bottom, model).contains("f29"))
+                .as("the body follows the cursor to the tail")
+                .isTrue();
     }
 
     @Test
-    void dataPreviewOverflowStillStepsBetweenExpandableFieldsOnly() {
+    void dataPreviewCursorStopsOnEveryLineNotOnlyActionableOnes() {
         List<String> names = new ArrayList<>(numberedValues("f", 30));
         List<String> values = new ArrayList<>(numberedValues("v", 30));
         List<String> expanded = new ArrayList<>(values);
@@ -320,24 +324,21 @@ class DiveRenderTest {
         NavigationStack stack = rooted(state);
         Rect area = new Rect(0, 0, 100, 24);
         RenderHarness.RenderedFrame first = RenderHarness.render(area, state, model);
-        assertThat(first.contains("▶items")).isTrue();
 
-        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
-        ScreenState.DataPreview atMore = (ScreenState.DataPreview) stack.top();
-        assertThat(atMore.modalCursorLine())
-                .as("↓ skips the 19 scalars between the two expandable fields "
-                        + "even though the body overflows")
-                .isEqualTo(20);
-        RenderHarness.RenderedFrame second = RenderHarness.render(area, atMore, model);
-        assertThat(second.contains("▶more"))
-                .as("the body scrolled far enough to show the newly selected field")
-                .isTrue();
-
-        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack))
-                .as("no expandable field after the last one")
+        // Both expandable fields are marked, so a reader can see where Enter
+        // goes without arrowing onto each row.
+        assertThat(first.contains("▶ items")).isTrue();
+        assertThat(first.contains("▶ f1"))
+                .as("a scalar the row shows in full is not marked")
                 .isFalse();
-        assertThat(DataPreviewScreen.handle(key(KeyCode.UP), model, stack)).isTrue();
-        assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isZero();
+
+        // ↓ steps one line, onto the scalar immediately below, rather than
+        // skipping the nineteen rows between the two expandable fields.
+        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
+        assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
+        assertThat(DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack))
+                .as("Enter does nothing on a row that is not actionable")
+                .isFalse();
     }
 
     @Test
@@ -348,19 +349,18 @@ class DiveRenderTest {
         names.set(20, "items");
         values.set(20, "[alpha, beta, gamma]");
         expanded.set(20, "[\n  alpha,\n  beta,\n  gamma\n]");
-        ScreenState.DataPreview state = openModal(names, values, expanded);
+        ScreenState.DataPreview state = openModal(names, values, expanded, 20);
         NavigationStack stack = rooted(state);
         Rect area = new Rect(0, 0, 100, 24);
         RenderHarness.render(area, state, model);
 
-        // ↓ lands on `items`, leaving it on the last visible line.
-        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
+        // The cursor sits on `items`, the only field Enter can act on.
         assertThat(DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack)).isTrue();
 
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.expandedColumns()).containsExactly(20);
         RenderHarness.RenderedFrame rendered = RenderHarness.render(area, opened, model);
-        assertThat(rendered.contains("▶items")).isTrue();
+        assertThat(rendered.contains("▶ items")).isTrue();
         assertThat(rendered.contains("gamma"))
                 .as("expanding scrolls so the revealed lines are on screen, "
                         + "not just the field's key line")
@@ -368,7 +368,7 @@ class DiveRenderTest {
     }
 
     @Test
-    void dataPreviewPageKeysScrollTheBodyWithoutMovingTheCursor() {
+    void dataPreviewPageKeysMoveTheCursorLikeEveryOtherPane() {
         List<String> names = new ArrayList<>(numberedValues("f", 30));
         List<String> values = new ArrayList<>(numberedValues("v", 30));
         List<String> expanded = new ArrayList<>(values);
@@ -381,12 +381,18 @@ class DiveRenderTest {
         RenderHarness.render(area, state, model);
 
         assertThat(DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack)).isTrue();
-        ScreenState.DataPreview scrolled = (ScreenState.DataPreview) stack.top();
-        assertThat(scrolled.modalCursorLine())
-                .as("paging reads ahead; it does not drag the selection along")
-                .isZero();
-        assertThat(scrolled.modalScroll()).isPositive();
-        assertThat(RenderHarness.render(area, scrolled, model).contains("f29")).isTrue();
+        ScreenState.DataPreview paged = (ScreenState.DataPreview) stack.top();
+        assertThat(paged.modalCursorLine())
+                .as("PgDn is the coarse ↓, not a second axis")
+                .isPositive();
+        assertThat(paged.modalScroll())
+                .as("the body follows the cursor")
+                .isPositive();
+        assertThat(DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack)).isTrue();
+        assertThat(RenderHarness.render(area, (ScreenState) stack.top(), model).contains("f29"))
+                .as("G reaches the tail the cursor now walks")
+                .isTrue();
     }
 
     @Test
@@ -403,7 +409,7 @@ class DiveRenderTest {
         assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
         ScreenState.DataPreview selectedNote = (ScreenState.DataPreview) stack.top();
         assertThat(selectedNote.modalCursorLine()).isEqualTo(1);
-        assertThat(RenderHarness.render(area, selectedNote, model).contains("▶note"))
+        assertThat(RenderHarness.render(area, selectedNote, model).contains("▶ note"))
                 .as("a truncated single-line value shows an action marker")
                 .isTrue();
 
@@ -414,7 +420,7 @@ class DiveRenderTest {
     }
 
     @Test
-    void dataPreviewFittedSingleExpandableFieldOmitsNavigationHint() {
+    void dataPreviewFittedBodyOffersMovementButNotPaging() {
         ScreenState.DataPreview state = openModal(
                 List.of("items", "id", "status"),
                 List.of("[a, b]", "1", "ready"),
@@ -424,17 +430,13 @@ class DiveRenderTest {
 
         RenderHarness.RenderedFrame rendered = RenderHarness.render(area, state, model);
 
-        assertThat(DataPreviewScreen.handle(key(KeyCode.UP), model, stack))
-                .as("there is no previous actionable field")
-                .isFalse();
         assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack))
-                .as("there is no next actionable field")
-                .isFalse();
-        assertThat(rendered.contains("↑↓ field"))
-                .as("the hint omits navigation when neither direction can move")
-                .isFalse();
-        assertThat(rendered.contains("PgDn/PgUp scroll"))
-                .as("the body fits, so there is nothing to scroll to")
+                .as("the cursor moves to the next line, expandable or not")
+                .isTrue();
+        assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
+        assertThat(rendered.contains("↑↓ move")).isTrue();
+        assertThat(rendered.contains("PgDn/PgUp page"))
+                .as("the body fits, so there is nothing to page to")
                 .isFalse();
         assertThat(rendered.contains("Enter expand"))
                 .as("the selected field remains expandable")
@@ -443,21 +445,21 @@ class DiveRenderTest {
 
     @Test
     void dataPreviewValueFillingTheBudgetExactlyIsNotActionable() {
-        // maxKeyWidth 4 ("note") at width 100 leaves an 85-cell value budget.
-        int budget = 85;
+        // maxKeyWidth 4 ("note") at width 100 leaves an 84-cell value budget.
+        int budget = 84;
         ScreenState.DataPreview fits = openModal(
                 List.of("note"), List.of("x".repeat(budget)), List.of("x".repeat(budget)));
         NavigationStack stack = rooted(fits);
         Rect area = new Rect(0, 0, 100, 24);
 
-        assertThat(RenderHarness.render(area, fits, model).contains("▶note"))
+        assertThat(RenderHarness.render(area, fits, model).contains("▶ note"))
                 .as("a value the collapsed line shows in full is not actionable")
                 .isFalse();
         assertThat(DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack)).isFalse();
 
         ScreenState.DataPreview overflows = openModal(
                 List.of("note"), List.of("x".repeat(budget + 1)), List.of("x".repeat(budget + 1)));
-        assertThat(RenderHarness.render(area, overflows, model).contains("▶note"))
+        assertThat(RenderHarness.render(area, overflows, model).contains("▶ note"))
                 .as("one cell over the budget and expanding reveals something")
                 .isTrue();
     }
@@ -477,7 +479,7 @@ class DiveRenderTest {
         assertThat(rendered.contains("…"))
                 .as("the value fits the budget in cells, so it is not truncated")
                 .isFalse();
-        assertThat(rendered.contains("▶note"))
+        assertThat(rendered.contains("▶ note"))
                 .as("a fully visible value must not be offered as expandable")
                 .isFalse();
         assertThat(DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack)).isFalse();
@@ -502,7 +504,7 @@ class DiveRenderTest {
         assertThat(opened.modalCursorLine())
                 .as("id and name are scalars; the cursor opens on tags")
                 .isEqualTo(2);
-        assertThat(RenderHarness.render(area, opened, model).contains("▶tags")).isTrue();
+        assertThat(RenderHarness.render(area, opened, model).contains("▶ tags")).isTrue();
     }
 
     @Test
@@ -525,7 +527,7 @@ class DiveRenderTest {
         assertThat(opened.modalScroll())
                 .as("the only expandable field sits past the first screenful")
                 .isPositive();
-        assertThat(RenderHarness.render(area, opened, model).contains("▶items"))
+        assertThat(RenderHarness.render(area, opened, model).contains("▶ items"))
                 .as("opening scrolls the field it selected into view")
                 .isTrue();
     }
@@ -549,13 +551,27 @@ class DiveRenderTest {
     }
 
     @Test
+    void helpOverlayReachesItsTailOnAShortTerminal() {
+        // The overlay runs to about thirty lines. On a short terminal it was
+        // capped to the screen and the remainder simply dropped.
+        Rect screenArea = new Rect(0, 0, 120, 16);
+        Buffer buffer = Buffer.empty(screenArea);
+        HelpOverlay.render(buffer, screenArea, 0);
+        assertThat(renderToString(buffer, screenArea)).doesNotContain("Data preview");
+
+        Buffer scrolled = Buffer.empty(screenArea);
+        HelpOverlay.render(scrolled, screenArea, HelpOverlay.lineCount(screenArea));
+        assertThat(renderToString(scrolled, screenArea)).contains("Data preview");
+    }
+
+    @Test
     void helpOverlayWrapsLongDescriptions() {
         // At 80 width, the description budget is 38 chars.
         // The longest description is 52 chars, so it should be forced to wrap.
         Rect screenArea = new Rect(0, 0, 80, 40);
         Buffer buffer = Buffer.empty(screenArea);
 
-        HelpOverlay.render(buffer, screenArea);
+        HelpOverlay.render(buffer, screenArea, 0);
 
         assertThat(renderToString(buffer, screenArea))
                 .contains("enter filter mode (Schema, Column ")
@@ -569,7 +585,7 @@ class DiveRenderTest {
         Rect screenArea = new Rect(0, 0, 120, 40);
         Buffer buffer = Buffer.empty(screenArea);
 
-        HelpOverlay.render(buffer, screenArea);
+        HelpOverlay.render(buffer, screenArea, 0);
 
         assertThat(renderToString(buffer, screenArea)).contains("Version: " + Version.getVersion());
     }
@@ -583,7 +599,7 @@ class DiveRenderTest {
         Rect screenArea = new Rect(0, 0, 50, 40);
         Buffer buffer = Buffer.empty(screenArea);
 
-        HelpOverlay.render(buffer, screenArea);
+        HelpOverlay.render(buffer, screenArea, 0);
 
         // The "Press ? or Esc to close" sentinel is the very last line of the
         // overlay; if it renders, no content above it can have been clipped.
@@ -595,9 +611,17 @@ class DiveRenderTest {
     /// going through the open path.
     private static ScreenState.DataPreview openModal(
             List<String> names, List<String> values, List<String> expandedValues) {
+        return openModal(names, values, expandedValues, 0);
+    }
+
+    /// As above, with the modal's line cursor already on `cursorLine` — for
+    /// tests about what a key does from a given position, rather than about
+    /// where opening puts it.
+    private static ScreenState.DataPreview openModal(
+            List<String> names, List<String> values, List<String> expandedValues, int cursorLine) {
         return new ScreenState.DataPreview(
                 0, 1, names, List.of(values), List.of(expandedValues),
-                0, 0, 0, true, Set.of(), 0);
+                0, 0, 0, true, Set.of(), cursorLine, 0);
     }
 
     /// A Data preview state with the modal closed, for tests that open it
@@ -934,6 +958,326 @@ class DiveRenderTest {
         return ColumnChunkDetailScreen.keybarKeys(new ScreenState.ColumnChunkDetail(
                 0, columnIndexOf(model, dottedName),
                 ScreenState.ColumnChunkDetail.Pane.FACTS, 0, true, false), model);
+    }
+
+    @Test
+    void dataPreviewFillsTheViewportOnTheFrameItIsEnteredOn() {
+        // Entering the screen left the bottom of the viewport blank until the
+        // first keypress: the page was sized from whatever viewport the
+        // previous screen had observed, and only re-loaded on the next event.
+        Keys.resetObservedGeometry();
+        Rect body = new Rect(0, 0, 120, 30);
+        // A page sized for a shorter screen, as arriving from a pane with
+        // less room for rows produces.
+        ScreenState.DataPreview entered = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(entered);
+
+        DataPreviewScreen.fitToViewport(model, stack, body);
+
+        ScreenState.DataPreview fitted = (ScreenState.DataPreview) stack.top();
+        int viewport = body.height() - 3;
+        assertThat(fitted.rows())
+                .as("the page fills the rows the body can paint")
+                .hasSize(viewport);
+        assertThat(RenderHarness.render(body, fitted, model).contains(String.valueOf(viewport)))
+                .as("the last row of the viewport is painted, not blank")
+                .isTrue();
+    }
+
+    @Test
+    void overviewFactsPaneKeepsTheKeyValueCursorOnScreen() throws Exception {
+        // The facts pane moved a cursor it never scrolled to, so on a short
+        // terminal the selected entry could sit below the fold while the
+        // keybar still offered Enter to open it.
+        Path file = Path.of(getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Rect area = new Rect(0, 0, 120, 12);
+            NavigationStack stack = new NavigationStack(new ScreenState.Overview(
+                    ScreenState.Overview.Pane.FACTS, 0, 0, false, 0));
+            RenderHarness.render(area, stack.top(), m);
+
+            assertThat(OverviewScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack)).isTrue();
+            ScreenState.Overview bottom = (ScreenState.Overview) stack.top();
+            List<Map.Entry<String, String>> kv = m.facts().keyValueMetadata();
+            assertThat(bottom.kvSelection())
+                    .isEqualTo(OverviewScreen.kvEntryRow(kv.size() - 1));
+            RenderHarness.RenderedFrame frame = RenderHarness.render(area, bottom, m);
+            assertThat(frame.contains(kv.get(kv.size() - 1).getKey())).isTrue();
+        }
+    }
+
+    @Test
+    void dataPreviewModalOffersJumpKeysEvenWhenTheBodyFits() {
+        // g/G move the cursor, so they act whenever there is more than one
+        // line — the hint gated them on the body having to scroll.
+        ScreenState.DataPreview state = openModal(
+                List.of("items", "id", "status"),
+                List.of("[a, b]", "1", "ready"),
+                List.of("[\n  a,\n  b\n]", "1", "ready"));
+        RenderHarness.RenderedFrame rendered =
+                RenderHarness.render(new Rect(0, 0, 100, 24), state, model);
+
+        assertThat(rendered.contains("PgDn/PgUp page"))
+                .as("the body fits, so there is nothing to page to")
+                .isFalse();
+        assertThat(rendered.contains("g/G first/last")).isTrue();
+    }
+
+    @Test
+    void drillIntoCursorWalksPastEntriesTheChunkDoesNotHave() throws Exception {
+        // The cursor was re-snapped to the first enabled entry on every
+        // keypress, so on a chunk with only Pages and Dictionary populated it
+        // moved onto Column index and was dragged straight back.
+        Path file = Path.of(getClass().getResource("/yellow_tripdata_sample.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(ColumnChunkDetailScreen.initialState(m, 0, 0, true));
+            RenderHarness.render(new Rect(0, 0, 120, 24), stack.top(), m);
+
+            for (int expected = 1; expected <= 3; expected++) {
+                assertThat(ColumnChunkDetailScreen.handle(key(KeyCode.DOWN), m, stack)).isTrue();
+                assertThat(((ScreenState.ColumnChunkDetail) stack.top()).menuSelection())
+                        .isEqualTo(expected);
+            }
+            assertThat(ColumnChunkDetailScreen.handle(key(KeyCode.DOWN), m, stack)).isTrue();
+            assertThat(((ScreenState.ColumnChunkDetail) stack.top()).menuSelection())
+                    .as("the last entry is the last entry")
+                    .isEqualTo(3);
+        }
+    }
+
+    @Test
+    void documentPaneWalksTheCursorToTheEdgeBeforeMovingItsContent() throws Exception {
+        // Recomputing the window from the cursor pinned it to the bottom row,
+        // so every step up dragged the whole pane along instead of walking the
+        // cursor to the top of the window first, as the list screens do.
+        Path file = Path.of(getClass().getResource("/yellow_tripdata_sample.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Keys.resetObservedGeometry();
+            Rect area = new Rect(0, 0, 110, 10);
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(new ScreenState.RowGroupDetail(
+                    0, ScreenState.RowGroupDetail.Pane.FACTS, 0));
+            RenderHarness.render(area, stack.top(), m);
+            RowGroupDetailScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack);
+            RenderHarness.render(area, stack.top(), m);
+
+            int settled = ((ScreenState.RowGroupDetail) stack.top()).factsTop();
+            assertThat(settled).isPositive();
+
+            assertThat(RowGroupDetailScreen.handle(key(KeyCode.UP), m, stack)).isTrue();
+            ScreenState.RowGroupDetail moved = (ScreenState.RowGroupDetail) stack.top();
+            assertThat(moved.scrollTop())
+                    .as("the cursor moved")
+                    .isLessThan(((ScreenState.RowGroupDetail) stack.top()).scrollTop() + 1);
+            assertThat(moved.factsTop())
+                    .as("the content did not: the cursor was not yet at the top of the window")
+                    .isEqualTo(settled);
+        }
+    }
+
+    @Test
+    void overviewFactsComeBackWhenTheCursorReturnsToTheTop() throws Exception {
+        // The window only ever slid far enough to reveal the cursor, and this
+        // cursor cannot reach the facts — so once the list had pushed them off
+        // the top, walking back up did not bring them back.
+        Path file = Path.of(getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Keys.resetObservedGeometry();
+            Rect area = new Rect(0, 0, 110, 12);
+            NavigationStack stack = new NavigationStack(new ScreenState.Overview(
+                    ScreenState.Overview.Pane.FACTS, 0, 0, false, 0));
+            RenderHarness.render(area, stack.top(), m);
+
+            OverviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack);
+            RenderHarness.render(area, stack.top(), m);
+            OverviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), m, stack);
+
+            assertThat(RenderHarness.render(area, (ScreenState) stack.top(), m)
+                    .contains("Format version"))
+                    .as("the facts are on screen again")
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void footerDoesNotJumpOnTheFirstKeyAfterOpening() {
+        // The entry state was built before this pane had rendered, so its
+        // stored window came from the previous pane's viewport. The frame the
+        // reader saw was drawn from the reconciled value, and the first
+        // keypress used to step the body to catch up.
+        Keys.resetObservedGeometry();
+        Rect area = new Rect(0, 0, 110, 14);
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(FooterScreen.initialState(model));
+        RenderHarness.RenderedFrame opened = RenderHarness.render(area, stack.top(), model);
+
+        assertThat(FooterScreen.handle(key(KeyCode.UP), model, stack)).isTrue();
+        RenderHarness.RenderedFrame moved = RenderHarness.render(area, stack.top(), model);
+
+        assertThat(moved.lines().getFirst())
+                .as("the body stayed put; only the cursor moved")
+                .isEqualTo(opened.lines().getFirst());
+    }
+
+    @Test
+    void footerCursorReachesEveryRowOfTheBody() throws Exception {
+        // The cursor stopped only on anchors, and the anchors sit in the
+        // lower half of the body, so the rows above the topmost one could not
+        // be visited at all.
+        Path file = Path.of(getClass().getResource("/yellow_tripdata_sample.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Keys.resetObservedGeometry();
+            Rect area = new Rect(0, 0, 110, 14);
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(FooterScreen.initialState(m));
+            RenderHarness.render(area, stack.top(), m);
+            int anchor = ((ScreenState.Footer) stack.top()).cursorRow();
+            assertThat(anchor)
+                    .as("opening lands on an anchor, not on line zero")
+                    .isPositive();
+
+            // One row at a time all the way to the top, visiting every row.
+            for (int expected = anchor - 1; expected >= 0; expected--) {
+                assertThat(FooterScreen.handle(key(KeyCode.UP), m, stack)).isTrue();
+                assertThat(((ScreenState.Footer) stack.top()).cursorRow()).isEqualTo(expected);
+            }
+            assertThat(FooterScreen.handle(key(KeyCode.UP), m, stack))
+                    .as("handled, but there is nowhere above the first line")
+                    .isTrue();
+            assertThat(((ScreenState.Footer) stack.top()).cursorRow()).isZero();
+            assertThat(RenderHarness.render(area, (ScreenState) stack.top(), m)
+                    .contains("Format version"))
+                    .as("the head of the body is on screen")
+                    .isTrue();
+        }
+    }
+
+    @Test
+    void overviewFactsScrollPastTheFixedFactsWhenTheCursorNeedsTheRoom() throws Exception {
+        // The facts above the key/value list were pinned and only the list
+        // was windowed, so on a short pane whatever they pushed past the
+        // bottom could not be reached.
+        Path file = Path.of(getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Keys.resetObservedGeometry();
+            Rect area = new Rect(0, 0, 110, 12);
+            NavigationStack stack = new NavigationStack(new ScreenState.Overview(
+                    ScreenState.Overview.Pane.FACTS, 0, 0, false, 0));
+            RenderHarness.render(area, stack.top(), m);
+
+            List<Map.Entry<String, String>> kv = m.facts().keyValueMetadata();
+            assertThat(OverviewScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack)).isTrue();
+
+            RenderHarness.RenderedFrame frame =
+                    RenderHarness.render(area, (ScreenState) stack.top(), m);
+            assertThat(frame.contains(kv.get(kv.size() - 1).getKey()))
+                    .as("the last entry is reachable")
+                    .isTrue();
+            assertThat(frame.contains("Format version"))
+                    .as("the facts scrolled out of the way to make room for it")
+                    .isFalse();
+        }
+    }
+
+    @Test
+    void schemaKeepsTheCursorOnScreen() throws Exception {
+        // The schema tree moved its cursor and rendered from row zero, so on
+        // any file with more columns than the viewport the cursor left the
+        // screen — while the title reported a range the body did not show.
+        Path file = Path.of(getClass().getResource("/yellow_tripdata_sample.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Rect area = new Rect(0, 0, 120, 12);
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(ScreenState.Schema.initial());
+            RenderHarness.render(area, stack.top(), m);
+
+            assertThat(SchemaScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack)).isTrue();
+            ScreenState.Schema bottom = (ScreenState.Schema) stack.top();
+            assertThat(bottom.scrollTop()).isPositive();
+
+            // G selects the last leaf, so the window must have moved off the
+            // first one and onto the last.
+            RenderHarness.RenderedFrame frame = RenderHarness.render(area, bottom, m);
+            assertThat(frame.contains(m.schema().getColumn(0).name())).isFalse();
+            assertThat(frame.contains(m.schema().getColumn(m.columnCount() - 1).name())).isTrue();
+        }
+    }
+
+    @Test
+    void rowGroupDetailFactsPaneScrollsToItsTail() {
+        // Eighteen lines of facts in a pane that can show eleven: without
+        // scrolling the page-index section is unreachable.
+        Rect area = new Rect(0, 0, 120, 14);
+        ScreenState.RowGroupDetail top = new ScreenState.RowGroupDetail(
+                0, ScreenState.RowGroupDetail.Pane.FACTS, 0);
+        assertThat(RenderHarness.render(area, top, model).contains("Page indexes")).isFalse();
+
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(top);
+        assertThat(RowGroupDetailScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack)).isTrue();
+        ScreenState.RowGroupDetail bottom = (ScreenState.RowGroupDetail) stack.top();
+        assertThat(bottom.scrollTop()).isPositive();
+        assertThat(RenderHarness.render(area, bottom, model).contains("Page indexes")).isTrue();
+    }
+
+    @Test
+    void keyValueModalPagesWithPageDownAsWellAsShift() throws Exception {
+        // The modal recognised only Shift+↑/↓, so PgDn did nothing there while
+        // it paged on every other scrollable pane.
+        Path file = Path.of(getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            Rect area = new Rect(0, 0, 120, 14);
+            ScreenState.Overview open = new ScreenState.Overview(
+                    ScreenState.Overview.Pane.FACTS, 0,
+                    OverviewScreen.kvEntryRow(kvIndexOf(m, "pandas")), true, 0);
+            RenderHarness.render(area, open, m);
+
+            NavigationStack stack = new NavigationStack(open);
+            assertThat(OverviewScreen.handle(key(KeyCode.PAGE_DOWN), m, stack)).isTrue();
+            assertThat(((ScreenState.Overview) stack.top()).kvModalScroll()).isPositive();
+
+            assertThat(OverviewScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), m, stack)).isTrue();
+            int bottom = ((ScreenState.Overview) stack.top()).kvModalScroll();
+            assertThat(bottom).isPositive();
+
+            assertThat(OverviewScreen.handle(
+                    new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), m, stack)).isTrue();
+            assertThat(((ScreenState.Overview) stack.top()).kvModalScroll()).isZero();
+        }
+    }
+
+    @Test
+    void pageHeaderModalScrollsOnAShortTerminal() {
+        // The modal took only Esc/Enter, so on a terminal too short for the
+        // header its tail could not be reached.
+        Rect area = new Rect(0, 0, 120, 14);
+        ScreenState.Pages open = new ScreenState.Pages(0, 0, 0, true, true);
+        RenderHarness.render(area, open, model);
+
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(open);
+        assertThat(PagesScreen.handle(key(KeyCode.PAGE_DOWN), model, stack)).isTrue();
+        assertThat(((ScreenState.Pages) stack.top()).modalScroll()).isPositive();
+        // The modal stays open: paging is not a way out of it.
+        assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isTrue();
+    }
+
+    private static int kvIndexOf(ParquetModel model, String key) {
+        List<Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
+        for (int i = 0; i < kv.size(); i++) {
+            if (kv.get(i).getKey().equals(key)) {
+                return i;
+            }
+        }
+        throw new IllegalArgumentException("no such key/value entry: " + key);
     }
 
     private static KeyEvent key(KeyCode code) {

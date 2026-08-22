@@ -38,33 +38,14 @@ public final class ColumnChunksScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnChunks state = (ScreenState.ColumnChunks) stack.top();
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
-        if (Keys.isStepUp(event)) {
-            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
-            return true;
-        }
-        if (Keys.isStepDown(event)) {
-            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
-            return true;
-        }
-        if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
-            return true;
-        }
-        if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
-            return true;
-        }
-        if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(moved(state, 0));
-            return true;
-        }
-        if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(moved(state, count - 1));
+        int next = CursorPane.select(event, state.selection(), count);
+        if (next != CursorPane.UNHANDLED) {
+            stack.replaceTop(moved(state, next));
             return true;
         }
         if (event.isConfirm() && count > 0) {
-            stack.push(new ScreenState.ColumnChunkDetail(state.rowGroupIndex(), state.selection(),
-                    ScreenState.ColumnChunkDetail.Pane.MENU, 0, true, false));
+            stack.push(ColumnChunkDetailScreen.initialState(
+                    model, state.rowGroupIndex(), state.selection(), true));
             return true;
         }
         return false;
@@ -100,9 +81,7 @@ public final class ColumnChunksScreen {
                 .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " column chunks "
-                        + Plurals.rangeOf(state.selection(),
-                                model.rowGroup(state.rowGroupIndex()).columns().size(),
-                                Keys.viewportStride()) + " ")
+                        + Plurals.rangeOf(window, model.rowGroup(state.rowGroupIndex()).columns().size()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .build();
@@ -130,9 +109,7 @@ public final class ColumnChunksScreen {
     public static String keybarKeys(ScreenState.ColumnChunks state, ParquetModel model) {
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
         return new Keys.Hints()
-                .add(count > 1, "[↑↓] move")
-                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
-                .add(count > 1, "[g/G] first/last")
+                .add(true, CursorPane.hints(count))
                 .add(count > 0, "[Enter] open")
                 .add(true, "[Esc] back")
                 .build();

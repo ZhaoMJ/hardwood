@@ -99,6 +99,21 @@ public final class Keys {
         return observedViewportRows > 0 ? observedViewportRows : PAGE_STRIDE;
     }
 
+    /// Content width of the modal the last frame rendered. Modals wrap their
+    /// content, so the key handler needs the same width the renderer used to
+    /// agree with it on the line count.
+    private static int observedModalWidth = -1;
+
+    /// Called by [ScrollPane#renderModal] with the width it wrapped to.
+    public static void observeModalWidth(int columns) {
+        observedModalWidth = Math.max(1, columns);
+    }
+
+    /// Most recently observed modal content width, or a pre-render fallback.
+    public static int modalWidth() {
+        return observedModalWidth > 0 ? observedModalWidth : DEFAULT_VIEWPORT_COLUMNS;
+    }
+
     /// Records the terminal width used by horizontally scrolling screens.
     public static void observeViewportWidth(int columns) {
         observedViewportColumns = Math.max(1, columns);
@@ -107,13 +122,6 @@ public final class Keys {
     /// Most recently observed terminal width, or a pre-render fallback.
     public static int viewportWidth() {
         return observedViewportColumns > 0 ? observedViewportColumns : DEFAULT_VIEWPORT_COLUMNS;
-    }
-
-    /// True iff a screen has rendered and recorded a viewport size — used
-    /// by Data preview to gate viewport-driven page resizing so unit tests
-    /// that supply an explicit page size aren't overridden.
-    public static boolean hasObservedViewport() {
-        return observedViewportRows > 0;
     }
 
     /// Called by Data preview's `render` to record the area it was drawn into.
@@ -140,6 +148,7 @@ public final class Keys {
     public static void resetObservedGeometry() {
         observedViewportRows = -1;
         observedViewportColumns = -1;
+        observedModalWidth = -1;
         observedDataPreviewWidth = -1;
         observedDataPreviewHeight = -1;
     }
@@ -149,11 +158,15 @@ public final class Keys {
     /// lists exactly the keys that have a meaningful effect in the current
     /// screen state. Callers should phrase enablement at the
     /// "would-pressing-this-do-something-visible" level.
+    ///
+    /// An empty binding is dropped rather than separated, so a fragment
+    /// produced elsewhere — [ScrollPane#hints(int,int)], say — can be added
+    /// unconditionally and contribute nothing when it is empty.
     public static final class Hints {
         private final StringBuilder sb = new StringBuilder();
 
         public Hints add(boolean enabled, String binding) {
-            if (enabled) {
+            if (enabled && !binding.isEmpty()) {
                 if (!sb.isEmpty()) {
                     sb.append("  ");
                 }

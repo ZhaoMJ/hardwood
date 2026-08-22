@@ -62,6 +62,21 @@ public final class ColumnChunkDetailScreen {
     private ColumnChunkDetailScreen() {
     }
 
+    /// The state to push when drilling into a chunk: the menu focused, with
+    /// the cursor on the first entry `Enter` can act on.
+    ///
+    /// Chosen here rather than corrected on each keypress — a screen that
+    /// re-snapped the cursor every event would drag it straight back off any
+    /// disabled entry the reader moved onto.
+    public static ScreenState.ColumnChunkDetail initialState(ParquetModel model, int rowGroupIndex,
+                                                             int columnIndex, boolean logicalTypes) {
+        ScreenState.ColumnChunkDetail entry = new ScreenState.ColumnChunkDetail(
+                rowGroupIndex, columnIndex, ScreenState.ColumnChunkDetail.Pane.MENU, 0,
+                logicalTypes, false);
+        int first = firstEnabledIndex(MenuItem.values(), model, entry);
+        return first <= 0 ? entry : state(entry, first);
+    }
+
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnChunkDetail state = (ScreenState.ColumnChunkDetail) stack.top();
         if (event.isFocusNext() || event.isFocusPrevious()) {
@@ -92,30 +107,9 @@ public final class ColumnChunkDetailScreen {
             return scrollFacts(event, model, stack, state);
         }
         MenuItem[] items = MenuItem.values();
-        // Snap an out-of-place selection to the first enabled item — covers
-        // the initial entry where menuSelection is 0 (PAGES) and (in
-        // principle) any later state where the chunk shape has changed.
-        if (!itemEnabled(items[state.menuSelection()], model, state)) {
-            int first = firstEnabledIndex(items, model, state);
-            if (first >= 0 && first != state.menuSelection()) {
-                state = state(state, first);
-                stack.replaceTop(state);
-            }
-        }
-        if (event.isUp()) {
-            int prev = previousEnabledIndex(items, model, state, state.menuSelection());
-            if (prev < 0) {
-                return false;
-            }
-            stack.replaceTop(state(state, prev));
-            return true;
-        }
-        if (event.isDown()) {
-            int next = nextEnabledIndex(items, model, state, state.menuSelection());
-            if (next < 0) {
-                return false;
-            }
-            stack.replaceTop(state(state, next));
+        int selected = CursorPane.select(event, state.menuSelection(), items.length);
+        if (selected != CursorPane.UNHANDLED) {
+            stack.replaceTop(state(state, selected));
             return true;
         }
         if (event.isConfirm()) {
@@ -149,16 +143,8 @@ public final class ColumnChunkDetailScreen {
     public static String keybarKeys(ScreenState.ColumnChunkDetail state, ParquetModel model) {
         boolean onMenu = state.focus() == ScreenState.ColumnChunkDetail.Pane.MENU;
         MenuItem[] items = MenuItem.values();
-        int enabledCount = 0;
-        boolean currentEnabled = false;
-        for (int i = 0; i < items.length; i++) {
-            if (itemEnabled(items[i], model, state)) {
-                enabledCount++;
-                if (i == state.menuSelection()) {
-                    currentEnabled = true;
-                }
-            }
-        }
+        boolean currentEnabled = state.menuSelection() < items.length
+                && itemEnabled(items[state.menuSelection()], model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         boolean hasLogical = col.logicalType() != null;
         ColumnMetaData cmd = model.chunk(state.rowGroupIndex(), state.columnIndex()).metaData();
@@ -167,13 +153,14 @@ public final class ColumnChunkDetailScreen {
         // rows are shown outright and the key would toggle nothing.
         LevelSummary summary = LevelSummary.of(model.schema(), col, cmd);
         boolean hasLevels = hasHistogram(summary);
-        // Advertised only where it does something: the facts pane scrolls only
-        // when it has more lines than the viewport can hold.
-        boolean canScroll = !onMenu && factsLineCount(model, state) > Keys.viewportStride();
+        // The scroll fragment is empty unless the facts pane overflows, so it
+        // contributes nothing while the menu has focus or the content fits.
+        boolean canScroll = !onMenu;
         return new Keys.Hints()
                 .add(true, "[Tab] pane")
-                .add(onMenu && enabledCount > 1, "[↑↓] move")
-                .add(canScroll, "[↑↓] scroll")
+                .add(onMenu, CursorPane.hints(items.length))
+                .add(canScroll, factsLines(model, state, LevelSummary.MINIMUM_WIDTH)
+                        .hints(Keys.viewportStride()))
                 .add(onMenu && currentEnabled, "[Enter] open")
                 .add(hasLevels, "[l] levels")
                 .add(hasLogical, "[t] logical types")
@@ -187,50 +174,48 @@ public final class ColumnChunkDetailScreen {
                 state.logicalTypes(), state.levels(), state.scrollTop());
     }
 
+    /// Repaints the cursor line in the selection colour. Nothing in a facts
+    /// pane is actionable, so the cursor carries no marker — the colour alone
+    /// is the reader's place in the pane.
+    private static List<Line> withCursor(List<Line> window, int offset, boolean focused) {
+        if (!focused || offset < 0 || offset >= window.size()) {
+            return window;
+        }
+        List<Line> painted = new ArrayList<>(window);
+        StringBuilder text = new StringBuilder();
+        for (Span span : window.get(offset).spans()) {
+            text.append(span.content());
+        }
+        painted.set(offset, Line.from(new Span(text.toString(), Theme.selection())));
+        return painted;
+    }
+
     private static boolean isPlainChar(KeyEvent event, char character) {
         return event.code() == KeyCode.CHAR && event.character() == character
                 && !event.hasCtrl() && !event.hasAlt();
     }
 
-    /// Scrolls the facts pane, which is the only thing ↑/↓ can mean while it
-    /// has focus — the menu is not being navigated. The pane runs to about
-    /// forty lines on a nested column with its levels shown, so without this
-    /// the tail is simply dropped.
+    /// Moves the facts cursor, which is what the navigation keys mean while
+    /// the pane has focus — the menu is not being navigated. The pane runs to
+    /// about forty lines on a nested column with its levels shown.
     ///
-    /// The stored offset is clamped against the *current* content before it is
-    /// adjusted, so collapsing the levels while scrolled past their end does
-    /// not leave a stale offset that swallows the next few keypresses.
+    /// Nothing here is actionable, so the cursor carries no marker; it is the
+    /// reader's place in the pane, and it moves on the same keys as every
+    /// other focusable pane in dive.
     private static boolean scrollFacts(KeyEvent event, ParquetModel model, NavigationStack stack,
                                        ScreenState.ColumnChunkDetail state) {
-        int viewport = Keys.viewportStride();
-        int maxScroll = Math.max(0, factsLineCount(model, state) - viewport);
-        int current = Math.min(state.scrollTop(), maxScroll);
-        int next;
-        if (Keys.isStepUp(event)) {
-            next = Math.max(0, current - 1);
-        }
-        else if (Keys.isStepDown(event)) {
-            next = Math.min(maxScroll, current + 1);
-        }
-        else if (Keys.isPageUp(event)) {
-            next = Math.max(0, current - viewport);
-        }
-        else if (Keys.isPageDown(event)) {
-            next = Math.min(maxScroll, current + viewport);
-        }
-        else if (Keys.isJumpTop(event)) {
-            next = 0;
-        }
-        else if (Keys.isJumpBottom(event)) {
-            next = maxScroll;
-        }
-        else {
+        int next = factsLines(model, state, LevelSummary.MINIMUM_WIDTH)
+                .select(event, state.scrollTop(), Keys.viewportStride());
+        if (next == CursorPane.UNHANDLED) {
             return false;
         }
         if (next != state.scrollTop()) {
             stack.replaceTop(new ScreenState.ColumnChunkDetail(
                     state.rowGroupIndex(), state.columnIndex(), state.focus(), state.menuSelection(),
-                    state.logicalTypes(), state.levels(), next));
+                    state.logicalTypes(), state.levels(), next,
+                    factsLines(model, state, LevelSummary.MINIMUM_WIDTH)
+                            .windowTopAfterMove(state.factsTop(), state.scrollTop(), next,
+                                    Keys.viewportStride())));
         }
         return true;
     }
@@ -245,25 +230,6 @@ public final class ColumnChunkDetailScreen {
         return -1;
     }
 
-    private static int nextEnabledIndex(MenuItem[] items, ParquetModel model,
-                                         ScreenState.ColumnChunkDetail state, int from) {
-        for (int i = from + 1; i < items.length; i++) {
-            if (itemEnabled(items[i], model, state)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private static int previousEnabledIndex(MenuItem[] items, ParquetModel model,
-                                             ScreenState.ColumnChunkDetail state, int from) {
-        for (int i = from - 1; i >= 0; i--) {
-            if (itemEnabled(items[i], model, state)) {
-                return i;
-            }
-        }
-        return -1;
-    }
 
     private static boolean itemEnabled(MenuItem item, ParquetModel model, ScreenState.ColumnChunkDetail state) {
         ColumnChunk chunk = model.chunk(state.rowGroupIndex(), state.columnIndex());
@@ -280,11 +246,11 @@ public final class ColumnChunkDetailScreen {
     /// this does not depend on the width the lines are later built at — which
     /// is what lets key handling size a scroll against content it has not
     /// rendered.
-    private static int factsLineCount(ParquetModel model, ScreenState.ColumnChunkDetail state) {
-        return factsLines(model, state, LevelSummary.MINIMUM_WIDTH).size();
+    private static int factsRowCount(ParquetModel model, ScreenState.ColumnChunkDetail state) {
+        return factsLines(model, state, LevelSummary.MINIMUM_WIDTH).rowCount();
     }
 
-    private static List<Line> factsLines(ParquetModel model, ScreenState.ColumnChunkDetail state,
+    private static Document factsLines(ParquetModel model, ScreenState.ColumnChunkDetail state,
                                          int innerWidth) {
         ColumnChunk chunk = model.chunk(state.rowGroupIndex(), state.columnIndex());
         ColumnMetaData cmd = chunk.metaData();
@@ -292,20 +258,22 @@ public final class ColumnChunkDetailScreen {
         Statistics stats = cmd.statistics();
 
         LevelSummary summary = LevelSummary.of(model.schema(), col, cmd);
-        List<Line> lines = new ArrayList<>();
+        Document.Builder lines = Document.builder();
 
-        lines.add(group("Identity"));
-        lines.addAll(pathLines(Sizes.columnPath(cmd)));
-        lines.add(fact("Column idx", String.valueOf(col.columnIndex())));
-        lines.add(fact("Physical", cmd.type().name()));
-        lines.add(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : "—"));
+        lines.decoration(group("Identity"));
+        for (Line pathLine : pathLines(Sizes.columnPath(cmd))) {
+            lines.row(pathLine);
+        }
+        lines.row(fact("Column idx", String.valueOf(col.columnIndex())));
+        lines.row(fact("Physical", cmd.type().name()));
+        lines.row(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : "—"));
 
-        lines.add(Line.empty());
-        lines.add(group("Storage"));
-        lines.add(fact("Compressed", Sizes.format(cmd.totalCompressedSize())
+        lines.blank();
+        lines.decoration(group("Storage"));
+        lines.row(fact("Compressed", Sizes.format(cmd.totalCompressedSize())
                 + compressionQualifier(cmd)));
-        lines.add(fact("Uncompressed", Sizes.format(cmd.totalUncompressedSize())));
-        lines.add(fact("Codec", cmd.codec().name()));
+        lines.row(fact("Uncompressed", Sizes.format(cmd.totalUncompressedSize())));
+        lines.row(fact("Codec", cmd.codec().name()));
         // What the data pages actually use, which is the same figure
         // `hardwood inspect columns` prints. The chunk's declared list follows
         // only where `encoding_stats` made the two say different things: it
@@ -313,51 +281,57 @@ public final class ColumnChunkDetailScreen {
         // its own it cannot show a dictionary abandoned partway through.
         long dictionaryEntries = model.dictionaryEntries(state.rowGroupIndex(), state.columnIndex());
         long dictionaryValues = summary.hasPresentValues() ? summary.presentValues() : cmd.numValues();
-        lines.add(fact("Encoding",
+        lines.row(fact("Encoding",
                 Encodings.label(Encodings.dataPages(cmd), dictionaryEntries, dictionaryValues, "—")
                         + dictionaryQualifier(dictionaryEntries, dictionaryValues)));
         if (Encodings.hasEncodingStats(cmd)) {
-            lines.add(fact("Chunk encodings", cmd.encodings().stream()
+            lines.row(fact("Chunk encodings", cmd.encodings().stream()
                     .map(Enum::name)
                     .collect(Collectors.joining(", "))));
         }
         appendStorageStatistics(lines, summary, cmd, model, state);
 
-        lines.add(Line.empty());
-        lines.add(group("Content"));
+        lines.blank();
+        lines.decoration(group("Content"));
         appendContent(lines, cmd, stats, col, summary, state);
 
-        lines.add(Line.empty());
+        lines.blank();
         appendLevels(lines, summary, innerWidth, state);
 
-        lines.add(Line.empty());
-        lines.add(group("Layout"));
-        lines.add(fact("Data offset", Fmt.fmt("%,d", cmd.dataPageOffset())));
-        lines.add(fact("Dict offset", cmd.dictionaryPageOffset() != null
+        lines.blank();
+        lines.decoration(group("Layout"));
+        lines.row(fact("Data offset", Fmt.fmt("%,d", cmd.dataPageOffset())));
+        lines.row(fact("Dict offset", cmd.dictionaryPageOffset() != null
                 ? Fmt.fmt("%,d", cmd.dictionaryPageOffset())
                 : "—"));
-        lines.add(fact("Column index offset", chunk.columnIndexOffset() != null
+        lines.row(fact("Column index offset", chunk.columnIndexOffset() != null
                 ? Fmt.fmt("%,d", chunk.columnIndexOffset())
                 : "—"));
-        lines.add(fact("Offset index offset", chunk.offsetIndexOffset() != null
+        lines.row(fact("Offset index offset", chunk.offsetIndexOffset() != null
                 ? Fmt.fmt("%,d", chunk.offsetIndexOffset())
                 : "—"));
-        return lines;
+        return lines.build();
     }
 
     private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunkDetail state) {
         boolean focused = state.focus() == ScreenState.ColumnChunkDetail.Pane.FACTS;
         // Two border columns and the one-space inset every row is rendered with.
-        List<Line> lines = factsLines(model, state, Math.max(0, area.width() - 3));
+        Document facts = factsLines(model, state, Math.max(0, area.width() - 3));
 
         int viewport = Math.max(1, area.height() - 2);
         Keys.observeViewport(viewport);
-        int maxScroll = Math.max(0, lines.size() - viewport);
-        int scroll = Math.max(0, Math.min(maxScroll, state.scrollTop()));
-        int end = Math.min(lines.size(), scroll + viewport);
+        int cursorLine = Math.max(0, facts.lineOfRow(state.scrollTop()));
+        RowWindow window = RowWindow.from(
+                facts.windowTop(state.factsTop(), state.scrollTop(), viewport),
+                cursorLine, facts.lineCount(), viewport);
+        int scroll = window.start();
+        int end = window.end();
 
-        Block block = paneBlock(paneTitle(model, state, scroll, end, lines.size()), focused);
-        Paragraph.builder().block(block).text(Text.from(lines.subList(scroll, end)))
+        Block block = paneBlock(paneTitle(model, state, scroll, end, facts.lineCount()), focused);
+        Paragraph.builder()
+                .block(block)
+                .text(Text.from(withCursor(facts.lines().subList(scroll, end),
+                        cursorLine - scroll, focused)))
                 .left().build().render(area, buffer);
     }
 
@@ -378,13 +352,13 @@ public final class ColumnChunkDetailScreen {
     /// whose input the file does not record are dropped rather than shown as
     /// `—`: scaffolding a flat column with rows that can never be filled costs
     /// more lines than it explains.
-    private static void appendStorageStatistics(List<Line> lines, LevelSummary summary, ColumnMetaData cmd,
+    private static void appendStorageStatistics(Document.Builder lines, LevelSummary summary, ColumnMetaData cmd,
                                                 ParquetModel model, ScreenState.ColumnChunkDetail state) {
         if (!summary.hasSizeStatistics()) {
-            lines.add(advisory("Size statistics", "— (not written)"));
+            lines.row(advisory("Size statistics", "— (not written)"));
         }
         else {
-            lines.add(fact("Size statistics", coverage(model, state)));
+            lines.row(fact("Size statistics", coverage(model, state)));
         }
         if (summary.hasUnencoded()) {
             // The length-prefix parenthetical needs the present-value count; a
@@ -401,11 +375,11 @@ public final class ColumnChunkDetailScreen {
                 }
                 note.append('+').append(Sizes.format(summary.lengthPrefixBytes())).append(" lengths");
             }
-            lines.add(fact("Unencoded", Sizes.format(summary.unencodedBytes())
+            lines.row(fact("Unencoded", Sizes.format(summary.unencodedBytes())
                     + qualifier(note.toString())));
         }
         if (summary.hasAvgValueSize()) {
-            lines.add(fact("Avg value size", Sizes.format(Math.round(summary.avgValueSize()))));
+            lines.row(fact("Avg value size", Sizes.format(Math.round(summary.avgValueSize()))));
         }
     }
 
@@ -418,32 +392,32 @@ public final class ColumnChunkDetailScreen {
     /// describe rather than standing as rows of their own: each is a property
     /// of the count beside it, and a bare `2.64` on its own line reads as an
     /// independent fact with no scale.
-    private static void appendContent(List<Line> lines, ColumnMetaData cmd, Statistics stats, ColumnSchema col,
+    private static void appendContent(Document.Builder lines, ColumnMetaData cmd, Statistics stats, ColumnSchema col,
                                       LevelSummary summary, ScreenState.ColumnChunkDetail state) {
         boolean repeated = summary.maxRepetitionLevel() > 0;
         if (repeated && summary.hasRecords()) {
-            lines.add(fact("Records", Fmt.fmt("%,d", summary.records())));
+            lines.row(fact("Records", Fmt.fmt("%,d", summary.records())));
         }
-        lines.add(fact("Values", Fmt.fmt("%,d", cmd.numValues())
+        lines.row(fact("Values", Fmt.fmt("%,d", cmd.numValues())
                 + (repeated && summary.hasAvgFanOut()
                         ? qualifier(Fmt.fmt("%.2f per record", summary.avgFanOut()))
                         : "")));
         if (summary.maxDefinitionLevel() > 0 && summary.hasPresentValues()) {
-            lines.add(fact("Present", Fmt.fmt("%,d", summary.presentValues())
+            lines.row(fact("Present", Fmt.fmt("%,d", summary.presentValues())
                     + share(summary.presentValues(), cmd.numValues())));
         }
         long nulls = summary.nullCount(stats);
-        lines.add(fact("Nulls", nulls >= 0
+        lines.row(fact("Nulls", nulls >= 0
                 ? Fmt.fmt("%,d", nulls) + share(nulls, cmd.numValues())
                 : "—"));
         if (summary.hasAvgListLength()) {
-            lines.add(fact("Avg list length", Fmt.fmt("%.2f", summary.avgListLength())
+            lines.row(fact("Avg list length", Fmt.fmt("%.2f", summary.avgListLength())
                     + qualifier("non-empty")));
         }
-        lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : "—"));
-        lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : "—"));
+        lines.row(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : "—"));
+        lines.row(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : "—"));
         if (summary.mismatch() != null) {
-            lines.add(Line.from(
+            lines.row(Line.from(
                     new Span(" ⚠ " + padRight("Declared vs actual", 20), Theme.error()),
                     new Span(summary.mismatch(), Theme.error())));
         }
@@ -453,20 +427,20 @@ public final class ColumnChunkDetailScreen {
     /// both degrade to one `—` row each there is nothing to collapse, so they
     /// are shown outright rather than hidden behind a key that reveals two
     /// lines of explanation.
-    private static void appendLevels(List<Line> lines, LevelSummary summary, int innerWidth,
+    private static void appendLevels(Document.Builder lines, LevelSummary summary, int innerWidth,
                                      ScreenState.ColumnChunkDetail state) {
         if (!hasHistogram(summary)) {
-            lines.add(advisory("Def levels", definitionLevelsAbsent(summary)));
-            lines.add(advisory("Rep levels", repetitionLevelsAbsent(summary)));
+            lines.row(advisory("Def levels", definitionLevelsAbsent(summary)));
+            lines.row(advisory("Rep levels", repetitionLevelsAbsent(summary)));
             return;
         }
         if (!state.levels()) {
-            lines.add(advisory("Levels", "[l] to show"));
+            lines.row(advisory("Levels", "[l] to show"));
             return;
         }
         appendLevelBlock(lines, "Def levels", summary.definitionLevels(),
                 summary.maxDefinitionLevel(), definitionLevelsAbsent(summary), innerWidth);
-        lines.add(Line.empty());
+        lines.blank();
         appendLevelBlock(lines, "Rep levels", summary.repetitionLevels(),
                 summary.maxRepetitionLevel(), repetitionLevelsAbsent(summary), innerWidth);
     }
@@ -522,17 +496,17 @@ public final class ColumnChunkDetailScreen {
         return summary.maxRepetitionLevel() == 0 ? "— (not repeated)" : "— (not written)";
     }
 
-    private static void appendLevelBlock(List<Line> lines, String label, List<LevelSummary.LevelRow> rows,
+    private static void appendLevelBlock(Document.Builder lines, String label, List<LevelSummary.LevelRow> rows,
                                          int maxLevel, String absent, int innerWidth) {
         if (rows.isEmpty()) {
-            lines.add(advisory(label, absent));
+            lines.row(advisory(label, absent));
             return;
         }
         // A populated block is a section, not a fact: its caption sits at the
         // group indent so the level rows below read as its children.
-        lines.add(group(label + " (max " + maxLevel + ")"));
+        lines.decoration(group(label + " (max " + maxLevel + ")"));
         for (String row : LevelSummary.renderLevels(rows, innerWidth)) {
-            lines.add(Line.from(new Span(" " + row, Style.EMPTY)));
+            lines.row(Line.from(new Span(" " + row, Style.EMPTY)));
         }
     }
 
@@ -560,22 +534,14 @@ public final class ColumnChunkDetailScreen {
         Block block = paneBlock(" Drill into ", focused);
         List<Line> lines = new ArrayList<>();
         MenuItem[] items = MenuItem.values();
-        // First-render snap: if state.menuSelection() points at a disabled
-        // item, paint the cursor on the first enabled item so the user
-        // sees a usable affordance immediately. handle() persists the
-        // snap into state on the next event.
-        int effectiveSelection = state.menuSelection();
-        if (!itemEnabled(items[effectiveSelection], model, state)) {
-            int first = firstEnabledIndex(items, model, state);
-            if (first >= 0) {
-                effectiveSelection = first;
-            }
-        }
         for (int i = 0; i < items.length; i++) {
             MenuItem item = items[i];
             boolean enabled = itemEnabled(item, model, state);
-            boolean selected = focused && i == effectiveSelection && enabled;
-            String cursor = selected ? "▶ " : "  ";
+            boolean selected = focused && i == state.menuSelection();
+            // Menu entries a chunk does not have — a column index it was
+            // written without, say — stay on screen and keep their fact, but
+            // lose the marker that says Enter goes somewhere.
+            String cursor = CursorPane.marker(enabled, selected, true);
             Style labelStyle = selected
                     ? Theme.selection()
                     : Theme.primary();

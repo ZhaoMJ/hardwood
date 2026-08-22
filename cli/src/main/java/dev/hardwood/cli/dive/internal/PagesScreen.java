@@ -33,12 +33,10 @@ import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
-import dev.tamboui.text.Text;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
-import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -79,32 +77,21 @@ public final class PagesScreen {
                         state.scrollTop()));
                 return true;
             }
-            return false;
-        }
-        if (Keys.isStepUp(event)) {
-            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1), logical));
+            int next = ScrollPane.scroll(event, state.modalScroll(),
+                    modalLineCount(model, state), Keys.viewportStride());
+            if (next == ScrollPane.UNHANDLED) {
+                return false;
+            }
+            if (next != state.modalScroll()) {
+                stack.replaceTop(new ScreenState.Pages(
+                        state.rowGroupIndex(), state.columnIndex(), state.selection(), true, logical,
+                        state.scrollTop(), next));
+            }
             return true;
         }
-        if (Keys.isStepDown(event)) {
-            stack.replaceTop(moved(state, Math.min(headers.size() - 1, state.selection() + 1), logical));
-            return true;
-        }
-        if (Keys.isPageDown(event) && !headers.isEmpty()) {
-            stack.replaceTop(moved(state,
-                    Math.min(headers.size() - 1, state.selection() + Keys.viewportStride()), logical));
-            return true;
-        }
-        if (Keys.isPageUp(event) && !headers.isEmpty()) {
-            stack.replaceTop(moved(state,
-                    Math.max(0, state.selection() - Keys.viewportStride()), logical));
-            return true;
-        }
-        if (Keys.isJumpTop(event) && !headers.isEmpty()) {
-            stack.replaceTop(moved(state, 0, logical));
-            return true;
-        }
-        if (Keys.isJumpBottom(event) && !headers.isEmpty()) {
-            stack.replaceTop(moved(state, headers.size() - 1, logical));
+        int selected = CursorPane.select(event, state.selection(), headers.size());
+        if (selected != CursorPane.UNHANDLED) {
+            stack.replaceTop(moved(state, selected, logical));
             return true;
         }
         if (event.isConfirm() && !headers.isEmpty()) {
@@ -219,7 +206,7 @@ public final class PagesScreen {
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Pages "
-                        + Plurals.rangeOf(state.selection(), headers.size(), Keys.viewportStride())
+                        + Plurals.rangeOf(window, headers.size())
                         + titleSuffix + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
@@ -260,7 +247,7 @@ public final class PagesScreen {
         if (state.modalOpen() && !headers.isEmpty()) {
             buffer.setStyle(area, Theme.dim());
             renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection(), col,
-                    state.logicalTypes());
+                    state.logicalTypes(), state.modalScroll());
         }
     }
 
@@ -268,7 +255,7 @@ public final class PagesScreen {
         if (state.modalOpen()) {
             return "";
         }
-        java.util.List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
+        List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
         int count = headers.size();
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         // `t` toggles logical-type rendering of inline-stats Min / Max,
@@ -280,9 +267,7 @@ public final class PagesScreen {
                 && headers.get(state.selection()).type() != PageType.DICTIONARY_PAGE;
         boolean hasLogical = col.logicalType() != null && onDataPage;
         return new Keys.Hints()
-                .add(count > 1, "[↑↓] move")
-                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
-                .add(count > 1, "[g/G] first/last")
+                .add(true, CursorPane.hints(count))
                 .add(count > 0, "[Enter] view page header")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")
@@ -339,19 +324,34 @@ public final class PagesScreen {
     }
 
     private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header,
-                                          int index, ColumnSchema col, boolean logical) {
+                                          int index, ColumnSchema col, boolean logical, int scroll) {
         // Grow the modal to fill the available area so long inline-stats
-        // values aren't clipped at a fixed 60-cell width (the previous cap
-        // hid the bulk of any UTF-8 string min/max past ~50 chars).
-        int width = Math.max(40, screenArea.width() - 4);
-        int height = Math.max(8, screenArea.height() - 2);
-        int x = screenArea.left() + (screenArea.width() - width) / 2;
-        int y = screenArea.top() + (screenArea.height() - height) / 2;
-        Rect area = new Rect(x, y, width, height);
-        // Wipe the area so the underlying table doesn't bleed through cells
-        // that the Paragraph doesn't paint (Paragraph only writes where text is).
-        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
+        // values aren't clipped at a fixed 60-cell width.
+        Rect area = ScrollPane.modalArea(screenArea, Math.max(40, screenArea.width()), screenArea.height());
+        // Dictionary pages have no inline stats — `t` is a no-op even
+        // when the column carries a logical type, so suppress the hint.
+        boolean onDataPage = header.type() != PageType.DICTIONARY_PAGE;
+        boolean hasLogical = col.logicalType() != null && onDataPage;
+        ScrollPane.renderModal(buffer, area, "Page #" + index + " header",
+                headerModalLines(header, col, logical), scroll,
+                "Esc / Enter close" + (hasLogical ? " · t logical types" : ""));
+    }
 
+    /// Line count of the open header modal, so the key handler and the
+    /// renderer agree on how far it can scroll.
+    private static int modalLineCount(ParquetModel model, ScreenState.Pages state) {
+        List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
+        if (headers.isEmpty()) {
+            return 0;
+        }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        int index = Math.min(state.selection(), headers.size() - 1);
+        return headerModalLines(headers.get(index), col, state.logicalTypes()).size();
+    }
+
+    /// The header modal's content. Shared with the key handler, which needs
+    /// the line count to know how far the modal can scroll.
+    private static List<Line> headerModalLines(PageHeader header, ColumnSchema col, boolean logical) {
         List<Line> lines = new ArrayList<>();
         lines.add(kv("Type", header.type().name()));
         lines.add(kv("Compressed size", Sizes.dualFormat(header.compressedPageSize())));
@@ -390,20 +390,7 @@ public final class PagesScreen {
                 lines.add(kv("  Nulls", Fmt.fmt("%,d", inline.nullCount())));
             }
         }
-        lines.add(Line.empty());
-        // Dictionary pages have no inline stats — `t` is a no-op even
-        // when the column carries a logical type, so suppress the hint.
-        boolean onDataPage = header.type() != PageType.DICTIONARY_PAGE;
-        boolean hasLogical = col.logicalType() != null && onDataPage;
-        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Theme.dim())));
-
-        Block block = Block.builder()
-                .title(" Page #" + index + " header ")
-                .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .build();
-        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+        return lines;
     }
 
     /// Returns the per-page inline statistics (if any), preferring v2 over v1

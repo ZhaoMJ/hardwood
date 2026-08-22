@@ -283,18 +283,25 @@ class DiveStateTest {
     }
 
     @Test
-    void columnChunkDetailDisabledSelectionSnapsToFirstEnabled() {
-        // The fixture chunk has no dictionary, so opening the menu with
-        // DICTIONARY selected should snap to the first enabled item
-        // (PAGES) on the next event rather than firing a no-op drill.
+    void columnChunkDetailEnterDoesNothingOnAnEntryTheChunkDoesNotHave() {
+        // The fixture chunk has no dictionary. The cursor may rest there —
+        // the row carries a fact worth reading — but Enter has nowhere to go,
+        // which the missing ▶ says.
         NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
                 0, 0, ScreenState.ColumnChunkDetail.Pane.MENU,
                 ColumnChunkDetailScreen.MenuItem.DICTIONARY.ordinal(), true, false));
 
-        ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack)).isFalse();
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+    }
 
-        // First event snaps to PAGES, then drills.
-        assertThat(stack.top()).isInstanceOf(ScreenState.Pages.class);
+    @Test
+    void columnChunkDetailEntryStateLandsOnTheFirstEntryThatGoesSomewhere() {
+        ScreenState.ColumnChunkDetail entered =
+                ColumnChunkDetailScreen.initialState(model, 0, 0, true);
+
+        assertThat(entered.menuSelection())
+                .isEqualTo(ColumnChunkDetailScreen.MenuItem.PAGES.ordinal());
     }
 
     @Test
@@ -734,15 +741,13 @@ class DiveStateTest {
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.modalRow()).isEqualTo(2);
 
-        // ↑/↓ inside the modal move the field cursor — the modalRow stays put
+        // ↑/↓ inside the modal move the line cursor — the modalRow stays put
         // (row stepping is intentionally not available inside the modal; users
-        // close it and pick another row from the table). This fixture is two
-        // scalar columns, so there is no expandable field to step to and the
-        // cursor has nowhere to go.
-        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isFalse();
+        // close it and pick another row from the table).
+        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
         ScreenState.DataPreview moved = (ScreenState.DataPreview) stack.top();
         assertThat(moved.modalRow()).isEqualTo(2);
-        assertThat(moved.modalCursorLine()).isZero();
+        assertThat(moved.modalCursorLine()).isEqualTo(1);
 
         // Esc closes the modal.
         DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
@@ -750,7 +755,7 @@ class DiveStateTest {
     }
 
     @Test
-    void dataPreviewRowModalNavigationSkipsScalarFields() throws Exception {
+    void dataPreviewRowModalCursorStopsOnScalarFieldsToo() throws Exception {
         // First row: scalar id, followed by two non-empty expandable lists.
         Path file = Path.of(getClass().getResource("/list_basic_test.parquet").getPath());
         try (ParquetModel listModel = ParquetModel.open(InputFile.of(file), file.toString())) {
@@ -762,26 +767,22 @@ class DiveStateTest {
             // rather than the one under test.
             RenderHarness.render(new Rect(0, 0, 100, 24), initial, listModel);
 
-            // Opening skips id (line 0) and selects tags (line 1).
+            // Opening still selects the first field Enter can act on, which is
+            // tags (line 1) rather than the scalar id above it.
             DataPreviewScreen.handle(key(KeyCode.ENTER), listModel, stack);
             assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
 
-            boolean handledAtFirst = DataPreviewScreen.handle(key(KeyCode.UP), listModel, stack);
-            assertThat(handledAtFirst).isFalse();
-            assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
+            // From there the cursor walks every line, so id is reachable.
+            assertThat(DataPreviewScreen.handle(key(KeyCode.UP), listModel, stack)).isTrue();
+            assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isZero();
+            assertThat(DataPreviewScreen.handle(key(KeyCode.UP), listModel, stack))
+                    .as("already at the top, but the key is still the cursor's")
+                    .isTrue();
+            assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isZero();
 
-            boolean handledDown = DataPreviewScreen.handle(key(KeyCode.DOWN), listModel, stack);
-            assertThat(handledDown).isTrue();
-            // The next actionable field is scores (line 2).
+            assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), listModel, stack)).isTrue();
+            assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), listModel, stack)).isTrue();
             assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(2);
-
-            boolean handledAtLast = DataPreviewScreen.handle(key(KeyCode.DOWN), listModel, stack);
-            assertThat(handledAtLast).isFalse();
-            assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(2);
-
-            boolean handledUp = DataPreviewScreen.handle(key(KeyCode.UP), listModel, stack);
-            assertThat(handledUp).isTrue();
-            assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
         }
     }
 
@@ -1042,7 +1043,7 @@ class DiveStateTest {
     @Test
     void footerEnterOnColumnAnchorDrillsIntoFileIndexes() {
         // Initial cursor is the Column anchor; Enter drills.
-        NavigationStack stack = rooted(ScreenState.Footer.initial());
+        NavigationStack stack = rooted(FooterScreen.initialState(model));
         FooterScreen.handle(key(KeyCode.ENTER), model, stack);
 
         assertThat(stack.top()).isInstanceOf(ScreenState.FileIndexes.class);
@@ -1064,30 +1065,57 @@ class DiveStateTest {
     }
 
     @Test
-    void footerDownSkipsDisabledDictionaryAnchor() {
-        // The fixture has 0 chunks with dictionary, so ↓ from OFFSET should
-        // not advance to DICTIONARY (it's disabled).
-        NavigationStack stack = rooted(new ScreenState.Footer(
-                ScreenState.Footer.Anchor.OFFSET, 0));
-
+    void footerDownSkipsTheDisabledDictionaryAnchor() {
+        // The fixture has no chunks with a dictionary, so past the offset
+        // anchor the only stop left is the end of the body — ↓ does not pause
+        // on a section the file does not have.
+        NavigationStack stack = rooted(FooterScreen.initialState(model));
         FooterScreen.handle(key(KeyCode.DOWN), model, stack);
+        int offsetAnchor = ((ScreenState.Footer) stack.top()).cursorRow();
 
-        assertThat(((ScreenState.Footer) stack.top()).cursor())
-                .isEqualTo(ScreenState.Footer.Anchor.OFFSET);
+        assertThat(FooterScreen.handle(key(KeyCode.DOWN), model, stack)).isTrue();
+        ScreenState.Footer end = (ScreenState.Footer) stack.top();
+        assertThat(end.cursorRow()).isGreaterThan(offsetAnchor);
+        assertThat(FooterScreen.handle(key(KeyCode.ENTER), model, stack))
+                .as("the end of the body is a stop, not an anchor")
+                .isFalse();
     }
 
     @Test
-    void footerDownTogglesToOffsetAnchorThenEnterDrills() {
-        NavigationStack stack = rooted(ScreenState.Footer.initial());
+    void footerDownJumpsToTheOffsetAnchorThenEnterDrills() {
+        NavigationStack stack = rooted(FooterScreen.initialState(model));
         FooterScreen.handle(key(KeyCode.DOWN), model, stack);
-
-        assertThat(((ScreenState.Footer) stack.top()).cursor())
-                .isEqualTo(ScreenState.Footer.Anchor.OFFSET);
 
         FooterScreen.handle(key(KeyCode.ENTER), model, stack);
         assertThat(stack.top()).isInstanceOf(ScreenState.FileIndexes.class);
         assertThat(((ScreenState.FileIndexes) stack.top()).kind())
                 .isEqualTo(ScreenState.FileIndexes.Kind.OFFSET);
+    }
+
+    @Test
+    void footerPagingMovesTheCursorAndIsNotUndoneByTheNextFrame() {
+        // The body used to re-derive its offset from the anchor on every
+        // render, so anything paged to was discarded on the next repaint and
+        // the top of the body could not be reached at all.
+        NavigationStack stack = rooted(FooterScreen.initialState(model));
+        RenderHarness.render(new Rect(0, 0, 120, 16), stack.top(), model);
+
+        assertThat(FooterScreen.handle(key(KeyCode.PAGE_DOWN), model, stack)).isTrue();
+        ScreenState.Footer paged = (ScreenState.Footer) stack.top();
+        assertThat(paged.cursorRow()).isPositive();
+
+        RenderHarness.render(new Rect(0, 0, 120, 16), paged, model);
+        assertThat(((ScreenState.Footer) stack.top()).cursorRow())
+                .as("rendering does not move the reader back to the anchor")
+                .isEqualTo(paged.cursorRow());
+
+        assertThat(FooterScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), model, stack)).isTrue();
+        assertThat(((ScreenState.Footer) stack.top()).cursorRow()).isZero();
+        assertThat(RenderHarness.render(new Rect(0, 0, 120, 16), stack.top(), model)
+                .contains("File layout"))
+                .as("g reaches the head of the body")
+                .isTrue();
     }
 
     @Test
