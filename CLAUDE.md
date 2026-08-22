@@ -83,6 +83,8 @@ Labels are not mutually exclusive — a TUI bug should get `bug` + `cli` + `dive
 
 When changing visual styling in the `hardwood dive` TUI (any code under `cli/src/main/java/dev/hardwood/cli/dive/`), follow the visual-hierarchy decision tree in [_designs/DIVE_THEME.md](_designs/DIVE_THEME.md). Style spans through one of `Theme.primary()` / `Theme.accent()` / `Theme.selection()` / `Theme.dim()`, or leave them at default fg via `Style.EMPTY`. Direct use of `Color.*` constants or literal `Style.EMPTY.bold()` / `Style.EMPTY.fg(...)` outside `Theme.java` is a smell — review against the decision tree before introducing any.
 
+Navigation keys and the `▶` marker follow the two rules in [_designs/DIVE_NAVIGATION_MODEL.md](_designs/DIVE_NAVIGATION_MODEL.md): every key moves the cursor, stopping on every row, and `▶` marks what `Enter` can act on while colour marks the cursor. Route a row-shaped pane through `CursorPane` and a document-shaped one through `ScrollPane` rather than handling the keys in the screen — every pane that deviated from the rules had hand-rolled them.
+
 List-shaped screens must build `Row` objects only for the visible viewport, never for the whole collection. Use `RowWindow.bottomPinned(selection, total, viewport)` to derive the slice and pass `window.selectionInWindow()` to `TableState.select(...)`. Building rows for the entire list is invisible on small inputs but turns navigation O(N) on dictionaries with hundreds of thousands of entries, page lists with thousands of pages, or wide-schema files. See [_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md](_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md).
 
 # Code Reviews

@@ -18,6 +18,7 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.RowValueFormatter;
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -110,7 +111,18 @@ public final class DictionaryScreen {
                 stack.replaceTop(with(state, state.selection(), false, state.filter(), false));
                 return true;
             }
-            return false;
+            int next = ScrollPane.scroll(event, state.modalScroll(),
+                    modalLineCount(model, state), Keys.viewportStride());
+            if (next == ScrollPane.UNHANDLED) {
+                return false;
+            }
+            if (next != state.modalScroll()) {
+                stack.replaceTop(new ScreenState.DictionaryView(
+                        state.rowGroupIndex(), state.columnIndex(), state.selection(),
+                        state.modalOpen(), state.filter(), state.searching(),
+                        state.loadConfirmed(), state.logicalTypes(), state.scrollTop(), next));
+            }
+            return true;
         }
         if (event.code() == KeyCode.CHAR && event.character() == '/') {
             stack.replaceTop(with(state, 0, false, state.filter(), true));
@@ -119,35 +131,9 @@ public final class DictionaryScreen {
         Dictionary dict = loadDictionary(model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         FilterIndex filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
-        // Plain Up/Down step one entry; PgDn/PgUp (and the Shift+↓/↑ Mac
-        // chord since most macOS laptops have no dedicated PgDn/PgUp keys)
-        // move Keys.viewportStride() entries via the shared helper.
-        if (Keys.isPageDown(event)) {
-            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.viewportStride()),
-                    false, state.filter(), false));
-            return true;
-        }
-        if (Keys.isPageUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.viewportStride()),
-                    false, state.filter(), false));
-            return true;
-        }
-        if (Keys.isStepUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
-            return true;
-        }
-        if (Keys.isStepDown(event)) {
-            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + 1), false, state.filter(), false));
-            return true;
-        }
-        if (Keys.isJumpTop(event) && !filtered.isEmpty()) {
-            stack.replaceTop(with(state, 0, false, state.filter(), false));
-            return true;
-        }
-        if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
-            stack.replaceTop(with(state, filtered.size() - 1, false, state.filter(), false));
+        int selected = CursorPane.select(event, state.selection(), filtered.size());
+        if (selected != CursorPane.UNHANDLED) {
+            stack.replaceTop(with(state, selected, false, state.filter(), false));
             return true;
         }
         if (event.isConfirm() && !filtered.isEmpty()) {
@@ -216,18 +202,23 @@ public final class DictionaryScreen {
         // why list screens must do this.
         int total = filtered.size();
         RowWindow window = RowWindow.from(state.scrollTop(), state.selection(), total, area.height() - 4);
+        // Enter opens the full value only for entries the row had to
+        // truncate, so the marker column carries a fact here rather than
+        // repeating the cursor.
+        boolean mixed = hasUnexpandableEntry(dict, col, filtered, window, state.logicalTypes());
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             int idx = filtered.at(i);
             rows.add(Row.from(
-                    "[" + idx + "]",
+                    CursorPane.marker(isExpandable(dict, idx, col, state.logicalTypes()),
+                            i == state.selection(), mixed) + "[" + idx + "]",
                     formatValue(dict, idx, col, VALUE_PREVIEW_MAX, state.logicalTypes())));
         }
-        Row header = Row.from("#", "Value").style(Theme.accent().bold());
+        Row header = Row.from("  #", "Value").style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Dictionary entries "
-                        + Plurals.rangeOf(state.selection(), total, Keys.viewportStride())
+                        + Plurals.rangeOf(window, total)
                         + (state.filter().isEmpty()
                                 ? ""
                                 : " · " + Plurals.format(dict.size(), "entry", "entries") + " total")
@@ -238,10 +229,10 @@ public final class DictionaryScreen {
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(new Constraint.Length(8), new Constraint.Fill(1))
+                .widths(new Constraint.Length(10), new Constraint.Fill(1))
                 .columnSpacing(2)
                 .block(block)
-                .highlightSymbol("▶ ")
+                .highlightSymbol("")
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
@@ -253,7 +244,8 @@ public final class DictionaryScreen {
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
             buffer.setStyle(area, Theme.dim());
-            renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes());
+            renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes(),
+                    state.modalScroll());
         }
     }
 
@@ -270,9 +262,7 @@ public final class DictionaryScreen {
         }
         boolean hasLogical = col.logicalType() != null;
         return new Keys.Hints()
-                .add(count > 1, "[↑↓] move")
-                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
-                .add(count > 1, "[g/G] first/last")
+                .add(true, CursorPane.hints(count))
                 .add(canExpand, "[Enter] view full value")
                 .add(dict != null, "[/] search")
                 .add(hasLogical, "[t] logical types")
@@ -375,6 +365,34 @@ public final class DictionaryScreen {
                 : model.dictionary(state.rowGroupIndex(), state.columnIndex());
     }
 
+    /// Whether `Enter` would do anything on this entry: the modal only earns
+    /// its place when the row had to truncate the value.
+    private static boolean isExpandable(Dictionary dict, int index, ColumnSchema col,
+                                        boolean useLogicalType) {
+        return fullValue(dict, index, col, useLogicalType).length() > VALUE_PREVIEW_MAX;
+    }
+
+    /// Whether the rows on screen include an entry `Enter` cannot open, and
+    /// the marker column therefore distinguishes rows rather than repeating
+    /// the cursor.
+    ///
+    /// Measured over the window rather than the whole dictionary: a file can
+    /// carry hundreds of thousands of entries and per-keystroke work has to
+    /// stay proportional to the viewport. The cost is that the column can
+    /// come and go while scrolling a dictionary whose entries straddle the
+    /// preview width — the cursor's own marker is unaffected, since it does
+    /// not depend on this.
+    private static boolean hasUnexpandableEntry(Dictionary dict, ColumnSchema col,
+                                                FilterIndex filtered, RowWindow window,
+                                                boolean useLogicalType) {
+        for (int i = window.start(); i < window.end(); i++) {
+            if (!isExpandable(dict, filtered.at(i), col, useLogicalType)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max,
                                       boolean useLogicalType) {
         String full = fullValue(dict, index, col, useLogicalType);
@@ -438,28 +456,40 @@ public final class DictionaryScreen {
     }
 
     private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
-                                         int index, boolean useLogicalType) {
-        int width = Math.min(80, screenArea.width() - 4);
-        int height = Math.min(16, screenArea.height() - 2);
-        int x = screenArea.left() + (screenArea.width() - width) / 2;
-        int y = screenArea.top() + (screenArea.height() - height) / 2;
-        Rect area = new Rect(x, y, width, height);
-        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
-
-        String full = fullValue(dict, index, col, useLogicalType);
-        List<Line> lines = new ArrayList<>();
-        lines.add(Line.empty());
-        lines.add(Line.from(Span.raw(" " + full)));
-        lines.add(Line.empty());
+                                         int index, boolean useLogicalType, int scroll) {
+        Rect area = ScrollPane.modalArea(screenArea, 80, 16);
         boolean hasLogical = col.logicalType() != null;
-        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Theme.dim())));
+        ScrollPane.renderModal(buffer, area, "Entry #" + index,
+                modalLines(fullValue(dict, index, col, useLogicalType), area), scroll,
+                "Esc / Enter close" + (hasLogical ? " · t logical types" : ""));
+    }
 
-        Block block = Block.builder()
-                .title(" Entry #" + index + " ")
-                .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .build();
-        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+    /// The modal's content, wrapped to its width. A dictionary entry can be
+    /// an arbitrarily long string, and the modal exists precisely to show
+    /// values the table row had to truncate, so it must wrap rather than run
+    /// off the right edge.
+    /// Line count of the open modal at the width the last frame wrapped to,
+    /// so the key handler and the renderer agree on how far it can scroll.
+    private static int modalLineCount(ParquetModel model, ScreenState.DictionaryView state) {
+        Dictionary dict = needsConfirmation(model, state) ? null : loadDictionary(model, state);
+        if (dict == null) {
+            return 0;
+        }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        FilterIndex filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
+        if (filtered.isEmpty()) {
+            return 0;
+        }
+        int index = filtered.at(Math.min(state.selection(), filtered.size() - 1));
+        return Strings.hardWrap(fullValue(dict, index, col, state.logicalTypes()),
+                Keys.modalWidth()).size();
+    }
+
+    private static List<Line> modalLines(String full, Rect area) {
+        List<Line> lines = new ArrayList<>();
+        for (String wrapped : Strings.hardWrap(full, ScrollPane.modalWidth(area))) {
+            lines.add(Line.from(Span.raw(" " + wrapped)));
+        }
+        return lines;
     }
 }

@@ -16,6 +16,7 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -70,7 +71,18 @@ public final class ColumnIndexScreen {
                 stack.replaceTop(withModal(state, false));
                 return true;
             }
-            return false;
+            int next = ScrollPane.scroll(event, state.modalScroll(),
+                    modalLineCount(model, state), Keys.viewportStride());
+            if (next == ScrollPane.UNHANDLED) {
+                return false;
+            }
+            if (next != state.modalScroll()) {
+                stack.replaceTop(new ScreenState.ColumnIndexView(
+                        state.rowGroupIndex(), state.columnIndex(), state.selection(),
+                        state.filter(), state.searching(), state.logicalTypes(),
+                        state.modalOpen(), state.scrollTop(), next));
+            }
+            return true;
         }
         if (state.searching()) {
             return handleSearching(event, state, stack);
@@ -85,32 +97,9 @@ public final class ColumnIndexScreen {
         }
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Integer> filtered = filteredPages(ci, col, state.filter());
-        if (Keys.isPageDown(event)) {
-            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.viewportStride()),
-                    state.filter(), false));
-            return true;
-        }
-        if (Keys.isPageUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.viewportStride()),
-                    state.filter(), false));
-            return true;
-        }
-        if (Keys.isStepUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - 1), state.filter(), false));
-            return true;
-        }
-        if (Keys.isStepDown(event)) {
-            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + 1), state.filter(), false));
-            return true;
-        }
-        if (Keys.isJumpTop(event) && !filtered.isEmpty()) {
-            stack.replaceTop(with(state, 0, state.filter(), false));
-            return true;
-        }
-        if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
-            stack.replaceTop(with(state, filtered.size() - 1, state.filter(), false));
+        int selected = CursorPane.select(event, state.selection(), filtered.size());
+        if (selected != CursorPane.UNHANDLED) {
+            stack.replaceTop(with(state, selected, state.filter(), false));
             return true;
         }
         // Open the full Min/Max modal on Enter only when at least one of the
@@ -187,6 +176,13 @@ public final class ColumnIndexScreen {
         // Build Row objects only for the visible window — see RowWindow.
         RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
                 filtered.size(), area.height() - 5);
+        // Enter opens the full min/max only for pages whose bounds the row
+        // had to truncate, so the marker column carries a fact here rather
+        // than repeating the cursor.
+        boolean mixed = false;
+        for (int i = window.start(); i < window.end() && !mixed; i++) {
+            mixed = !isExpandable(ci, filtered.get(i), col, state.logicalTypes());
+        }
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             int idx = filtered.get(i);
@@ -194,17 +190,18 @@ public final class ColumnIndexScreen {
                     ? Fmt.fmt("%,d", ci.nullCounts()[idx])
                     : "—";
             rows.add(Row.from(
-                    String.valueOf(idx),
+                    CursorPane.marker(isExpandable(ci, idx, col, state.logicalTypes()),
+                            i == state.selection(), mixed) + idx,
                     ci.nullPages()[idx] ? "yes" : "no",
                     nulls,
                     formatStat(ci.minValues().get(idx), col, state.logicalTypes()),
                     formatStat(ci.maxValues().get(idx), col, state.logicalTypes())));
         }
-        Row header = Row.from("#", "Null page", "Nulls", "Min", "Max").style(Theme.accent().bold());
+        Row header = Row.from("  #", "Null page", "Nulls", "Min", "Max").style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Column index "
-                        + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + Plurals.rangeOf(window, filtered.size())
                         + (state.filter().isEmpty()
                                 ? ""
                                 : " · " + Plurals.format(ci.getPageCount(), "page", "pages") + " total")
@@ -215,14 +212,14 @@ public final class ColumnIndexScreen {
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(new Constraint.Length(5),
+                .widths(new Constraint.Length(7),
                         new Constraint.Length(10),
                         new Constraint.Length(10),
                         new Constraint.Fill(1),
                         new Constraint.Fill(1))
                 .columnSpacing(2)
                 .block(block)
-                .highlightSymbol("▶ ")
+                .highlightSymbol("")
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
@@ -236,37 +233,60 @@ public final class ColumnIndexScreen {
             buffer.setStyle(area, Theme.dim());
             renderMinMaxModal(buffer, area, idx,
                     ci.minValues().get(idx), ci.maxValues().get(idx),
-                    col, state.logicalTypes());
+                    col, state.logicalTypes(), state.modalScroll());
         }
     }
 
     private static void renderMinMaxModal(Buffer buffer, Rect screenArea, int pageIndex,
                                           byte[] minBytes, byte[] maxBytes,
-                                          ColumnSchema col, boolean logical) {
-        // Modal has space — bypass the per-string 20-char cap.
-        String min = minBytes == null ? "—" : IndexValueFormatter.format(minBytes, col, logical, false);
-        String max = maxBytes == null ? "—" : IndexValueFormatter.format(maxBytes, col, logical, false);
-
-        int width = Math.min(100, screenArea.width() - 4);
-        int height = Math.min(screenArea.height() - 2, 8);
-        int x = screenArea.left() + (screenArea.width() - width) / 2;
-        int y = screenArea.top() + (screenArea.height() - height) / 2;
-        Rect modal = new Rect(x, y, width, height);
-        dev.tamboui.widgets.Clear.INSTANCE.render(modal, buffer);
-
-        List<Line> lines = new ArrayList<>();
-        lines.add(Line.from(new Span(" Min ", Theme.primary()), Span.raw(min)));
-        lines.add(Line.from(new Span(" Max ", Theme.primary()), Span.raw(max)));
-        lines.add(Line.empty());
+                                          ColumnSchema col, boolean logical, int scroll) {
+        Rect area = ScrollPane.modalArea(screenArea, 100, screenArea.height());
         boolean hasLogical = col.logicalType() != null;
-        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Theme.dim())));
-        Block block = Block.builder()
-                .title(" Page #" + pageIndex + " min / max ")
-                .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .build();
-        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(modal, buffer);
+        ScrollPane.renderModal(buffer, area, "Page #" + pageIndex + " min / max",
+                minMaxLines(minBytes, maxBytes, col, logical, ScrollPane.modalWidth(area)), scroll,
+                "Esc / Enter close" + (hasLogical ? " · t logical types" : ""));
+    }
+
+    /// Line count of the open modal at the width the last frame wrapped to,
+    /// so the key handler and the renderer agree on how far it can scroll.
+    private static int modalLineCount(ParquetModel model, ScreenState.ColumnIndexView state) {
+        ColumnIndex ci = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
+        if (ci == null) {
+            return 0;
+        }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredPages(ci, col, state.filter());
+        if (filtered.isEmpty()) {
+            return 0;
+        }
+        int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+        return minMaxLines(ci.minValues().get(idx), ci.maxValues().get(idx),
+                col, state.logicalTypes(), Keys.modalWidth()).size();
+    }
+
+    /// The modal's content, wrapped to its width. Min and max are arbitrary
+    /// values — a long UTF-8 string bound ran off the right edge of the modal
+    /// that exists to show it in full.
+    private static List<Line> minMaxLines(byte[] minBytes, byte[] maxBytes, ColumnSchema col,
+                                          boolean logical, int width) {
+        List<Line> lines = new ArrayList<>();
+        appendBound(lines, "Min", minBytes, col, logical, width);
+        appendBound(lines, "Max", maxBytes, col, logical, width);
+        return lines;
+    }
+
+    private static void appendBound(List<Line> lines, String label, byte[] bytes, ColumnSchema col,
+                                    boolean logical, int width) {
+        // Modal has space — bypass the per-string 20-char cap.
+        String value = bytes == null ? "—" : IndexValueFormatter.format(bytes, col, logical, false);
+        // The label occupies the first five cells; continuation lines are
+        // indented to match so a wrapped value reads as one field.
+        List<String> wrapped = Strings.hardWrap(value, Math.max(1, width - 5));
+        for (int i = 0; i < wrapped.size(); i++) {
+            lines.add(i == 0
+                    ? Line.from(new Span(" " + label + " ", Theme.primary()), Span.raw(wrapped.get(i)))
+                    : Line.from(Span.raw("      " + wrapped.get(i))));
+        }
     }
 
     public static String keybarKeys(ScreenState.ColumnIndexView state, ParquetModel model) {
@@ -275,7 +295,7 @@ public final class ColumnIndexScreen {
         }
         ColumnIndex ci = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        java.util.List<Integer> filtered = filteredPages(ci, col, state.filter());
+        List<Integer> filtered = filteredPages(ci, col, state.filter());
         int count = filtered.size();
         boolean hasLogical = col.logicalType() != null;
         // Enter opens the modal only when the selected row's Min or Max
@@ -288,9 +308,7 @@ public final class ColumnIndexScreen {
             canExpand = min.endsWith("…") || max.endsWith("…");
         }
         return new Keys.Hints()
-                .add(count > 1, "[↑↓] move")
-                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
-                .add(count > 1, "[g/G] first/last")
+                .add(true, CursorPane.hints(count))
                 .add(canExpand, "[Enter] view min/max")
                 .add(count > 0, "[/] search")
                 .add(hasLogical, "[t] logical types")
@@ -359,6 +377,14 @@ public final class ColumnIndexScreen {
     /// value ourselves so an `…` suffix is visible when truncation
     /// happened — users then know the modal will reveal more on Enter.
     private static final int CELL_MAX = 24;
+
+    /// Whether `Enter` would do anything on this page: the modal only earns
+    /// its place when a bound was truncated to fit the cell budget, which
+    /// `formatStat` signals with a trailing ellipsis.
+    private static boolean isExpandable(ColumnIndex ci, int page, ColumnSchema col, boolean logical) {
+        return formatStat(ci.minValues().get(page), col, logical).endsWith("…")
+                || formatStat(ci.maxValues().get(page), col, logical).endsWith("…");
+    }
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {

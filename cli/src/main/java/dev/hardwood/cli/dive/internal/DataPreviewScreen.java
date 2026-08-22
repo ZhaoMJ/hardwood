@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
@@ -72,16 +73,6 @@ public final class DataPreviewScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
-        // Auto-resize the page to match the current viewport. The first
-        // render after initialState observes the available rows; on the
-        // first subsequent event we re-load to fill the actual viewport.
-        // Skip while a modal is open — the modal owns the screen.
-        if (state.modalRow() < 0 && Keys.hasObservedViewport()
-                && state.pageSize() != Keys.viewportStride()) {
-            state = loadPage(model, state.firstRow(), Keys.viewportStride(),
-                    state.columnScroll(), state.logicalTypes());
-            stack.replaceTop(state);
-        }
         long total = model.facts().totalRows();
         if (state.modalRow() >= 0) {
             return handleModal(event, state, stack, model);
@@ -177,11 +168,37 @@ public final class DataPreviewScreen {
         return false;
     }
 
+    /// Re-loads the page so it fills `body`, if it does not already.
+    ///
+    /// How many rows the screen shows is a fact about the frame, not about
+    /// the state that arrived, and a page sized for some other viewport
+    /// leaves the bottom of this one blank. Called before the body is
+    /// painted, so the screen is full on the frame it is entered on rather
+    /// than on the one after the first keypress.
+    ///
+    /// Does nothing while the record modal is open: the modal owns the
+    /// screen, and re-loading underneath it would move the row it is showing.
+    public static void fitToViewport(ParquetModel model, NavigationStack stack, Rect body) {
+        if (!(stack.top() instanceof ScreenState.DataPreview state) || state.modalRow() >= 0) {
+            return;
+        }
+        int viewport = viewportRows(body);
+        if (state.pageSize() == viewport) {
+            return;
+        }
+        stack.replaceTop(loadPage(model, state.firstRow(), viewport,
+                state.columnScroll(), state.logicalTypes()));
+    }
+
+    /// Block borders (top + bottom) and the header row are 3 cells of chrome
+    /// around the data rows.
+    private static int viewportRows(Rect body) {
+        return Math.max(1, body.height() - 3);
+    }
+
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DataPreview state) {
         Keys.observeDataPreviewArea(area.width(), area.height());
-        // Block borders (top + bottom) + header row = 3 cells of chrome
-        // around the data rows.
-        Keys.observeViewport(area.height() - 3);
+        Keys.observeViewport(viewportRows(area));
         Keys.observeViewportWidth(area.width());
         int columnCount = state.columnNames().size();
         ColumnWindow window = columnWindow(state, area.width());
@@ -251,15 +268,22 @@ public final class DataPreviewScreen {
         int maxKeyWidth = geometry.maxKeyWidth();
         int valueBudget = geometry.valueBudget();
         int viewport = geometry.viewportLines();
-        String continuationIndent = " ".repeat(1 + maxKeyWidth + 3);
+        String continuationIndent = " ".repeat(2 + maxKeyWidth + 3);
 
         // Build the full body as a flat line list. ownership[i] = the line
         // index where field i's key line starts; continuation lines for an
         // expanded field belong to that same field.
         int[] ownership = new int[names.size()];
+        // Enter expands only fields with more to show than the row fits, so
+        // the marker column says which ones those are.
+        boolean mixed = false;
+        for (int i = 0; i < names.size() && !mixed; i++) {
+            mixed = !isExpandableField(state, i, geometry);
+        }
         List<Line> all = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
+            String marker = CursorPane.marker(isExpandableField(state, i, geometry), false, mixed);
             String pad = " ".repeat(maxKeyWidth - name.length());
             boolean isExpanded = state.expandedColumns().contains(i);
             String value = i < values.size() ? values.get(i) : "";
@@ -267,7 +291,7 @@ public final class DataPreviewScreen {
             if (isExpanded) {
                 List<String> wrapped = expandedValueLines(state, i, geometry);
                 all.add(Line.from(
-                        new Span(" " + name + pad + " : ", Theme.primary()),
+                        new Span(marker + name + pad + " : ", Theme.primary()),
                         Span.raw(wrapped.get(0))));
                 for (int k = 1; k < wrapped.size(); k++) {
                     all.add(Line.from(Span.raw(continuationIndent + wrapped.get(k))));
@@ -275,20 +299,17 @@ public final class DataPreviewScreen {
             }
             else {
                 all.add(Line.from(
-                        new Span(" " + name + pad + " : ", Theme.primary()),
+                        new Span(marker + name + pad + " : ", Theme.primary()),
                         Span.raw(truncate(value, valueBudget))));
             }
         }
 
         int totalLines = all.size();
         int cursorLine = Math.max(0, Math.min(state.modalCursorLine(), totalLines - 1));
-        // The cursor exists to point at something Enter can act on. With no
-        // expandable field there is nothing to point at, so the modal becomes
-        // a static info display that PgDn/PgUp scrolls.
         boolean canExpandAny = hasExpandableField(state, geometry);
         int fieldIdx = fieldForLine(state, cursorLine, geometry);
         boolean focusExpandable = canExpandAny && isExpandableField(state, fieldIdx, geometry);
-        if (canExpandAny && cursorLine < all.size()) {
+        if (cursorLine < all.size()) {
             int fieldFirstLine = ownership[fieldIdx];
             String name = names.get(fieldIdx);
             String pad = " ".repeat(maxKeyWidth - name.length());
@@ -305,8 +326,8 @@ public final class DataPreviewScreen {
                     shown = truncate(value, valueBudget);
                 }
                 all.set(cursorLine, Line.from(
-                        new Span((focusExpandable ? "▶" : " ") + name + pad + " : ",
-                                selectionStyle),
+                        new Span(CursorPane.marker(focusExpandable, true, mixed)
+                                + name + pad + " : ", selectionStyle),
                         new Span(shown, selectionStyle)));
             }
             else if (isExpanded) {
@@ -324,13 +345,13 @@ public final class DataPreviewScreen {
 
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         lines.add(Line.empty());
-        // Hint is tiered: drop "↑↓ field" when no other expandable field can
-        // be reached; drop "PgDn/PgUp scroll" when the body already fits;
-        // drop "Enter expand" when the focused field has nothing more to
-        // show and "e/c all" when no field does; include "t logical types"
-        // only when at least one column has a logical type.
-        boolean canNavigate = previousExpandableLine(state, cursorLine, geometry) >= 0
-                || nextExpandableLine(state, cursorLine, geometry) >= 0;
+        // Hint is tiered: drop "↑↓ move" and "g/G first/last" on a
+        // single-line body; drop "PgDn/PgUp page" when the body already fits
+        // and there is nothing to page to; drop "Enter expand"
+        // when the focused field has nothing more to show and "e/c all" when
+        // no field does; include "t logical types" only when at least one
+        // column has a logical type.
+        boolean canNavigate = totalLines > 1;
         boolean canScroll = totalLines > viewport;
         boolean anyLogical = false;
         for (SchemaNode child : model.schema().getRootNode().children()) {
@@ -347,10 +368,15 @@ public final class DataPreviewScreen {
             segments.add(" ↑ " + scroll + " lines above");
         }
         if (canNavigate) {
-            segments.add("↑↓ field");
+            segments.add("↑↓ move");
         }
         if (canScroll) {
-            segments.add("PgDn/PgUp scroll");
+            segments.add("PgDn/PgUp page");
+        }
+        if (canNavigate) {
+            // g/G move the cursor, so they act whenever there is more than
+            // one line — whether or not the body has to scroll.
+            segments.add("g/G first/last");
         }
         if (focusExpandable) {
             segments.add("Enter expand");
@@ -390,7 +416,9 @@ public final class DataPreviewScreen {
         for (String name : names) {
             maxKeyWidth = Math.max(maxKeyWidth, name.length());
         }
-        int valueBudget = Math.max(8, width - 2 - 1 - maxKeyWidth - 3 - 1);
+        // Two borders, the two-cell actionability marker, the key, " : ",
+        // and a trailing cell.
+        int valueBudget = Math.max(8, width - 2 - 2 - maxKeyWidth - 3 - 1);
         int viewportLines = Math.max(1, height - 4);
         return new ModalGeometry(width, height, maxKeyWidth, valueBudget, viewportLines);
     }
@@ -457,12 +485,11 @@ public final class DataPreviewScreen {
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
                                        dev.hardwood.cli.dive.NavigationStack stack,
                                        ParquetModel model) {
-        // ↑/↓ step between the fields Enter can expand, skipping the ones it
-        // can't at every terminal size; PgDn/PgUp scroll the body so content
-        // the cursor never stops on is still readable. Enter toggles the
-        // field under the cursor; e / c expand / collapse all fields. Esc
-        // closes the modal. Row stepping is intentionally absent — the user
-        // picks another row from the table after closing.
+        // The cursor walks every line, so a long expanded value is crossed
+        // with PgDn rather than a field at a time. Enter toggles the field
+        // owning the line under the cursor; e / c expand / collapse all
+        // fields. Esc closes the modal. Row stepping is intentionally absent
+        // — the user picks another row from the table after closing.
         if (event.isCancel()) {
             stack.replaceTop(withModalRow(state, -1));
             return true;
@@ -513,48 +540,14 @@ public final class DataPreviewScreen {
                     state.expandedColumns(), state.modalCursorLine(), state.modalScroll()));
             return true;
         }
-        // Paging is checked before stepping because `isPageDown` / `isPageUp`
-        // also match Shift+↓/↑, which `event.isDown()` / `isUp()` would claim.
-        if (Keys.isPageDown(event)) {
-            return scrollModal(state, stack, totalLines, geometry, geometry.viewportLines());
-        }
-        if (Keys.isPageUp(event)) {
-            return scrollModal(state, stack, totalLines, geometry, -geometry.viewportLines());
-        }
-        if (Keys.isStepUp(event)) {
-            int previous = previousExpandableLine(state, state.modalCursorLine(), geometry);
-            if (previous < 0) {
-                return false;
-            }
-            stack.replaceTop(withCursorLine(state, previous, totalLines, geometry));
-            return true;
-        }
-        if (Keys.isStepDown(event)) {
-            int next = nextExpandableLine(state, state.modalCursorLine(), geometry);
-            if (next < 0) {
-                return false;
-            }
-            stack.replaceTop(withCursorLine(state, next, totalLines, geometry));
+        int selected = CursorPane.select(event, state.modalCursorLine(), totalLines);
+        if (selected != CursorPane.UNHANDLED) {
+            stack.replaceTop(withCursorLine(state, selected, totalLines, geometry));
             return true;
         }
         return false;
     }
 
-    /// Scrolls the modal body by `delta` lines without moving the cursor.
-    /// Returns `false` when the body is already against that end, so the
-    /// keypress reads as unhandled rather than as a no-op redraw.
-    private static boolean scrollModal(ScreenState.DataPreview state,
-                                       dev.hardwood.cli.dive.NavigationStack stack,
-                                       int totalLines, ModalGeometry geometry, int delta) {
-        int max = maxScroll(totalLines, geometry);
-        int current = Math.max(0, Math.min(state.modalScroll(), max));
-        int next = Math.max(0, Math.min(max, current + delta));
-        if (next == current) {
-            return false;
-        }
-        stack.replaceTop(withModalScroll(state, next));
-        return true;
-    }
 
     /// Total displayable lines in the modal body given `expandedColumns` —
     /// one per collapsed field, plus extra continuation lines for each
@@ -650,33 +643,6 @@ public final class DataPreviewScreen {
         String collapsed = truncate(field < values.size() ? values.get(field) : "",
                 geometry.valueBudget());
         return wrapped.size() > 1 || !wrapped.get(0).equals(collapsed);
-    }
-
-    /// First line of the nearest expandable field before `from`, or `-1` when
-    /// there is none. `↑` skips over fields Enter can do nothing with at every
-    /// terminal size; reading past them is `PgUp`'s job, not the cursor's.
-    private static int previousExpandableLine(
-            ScreenState.DataPreview state, int from, ModalGeometry geometry) {
-        int currentField = fieldForLine(state, from, geometry);
-        for (int field = currentField - 1; field >= 0; field--) {
-            if (isExpandableField(state, field, geometry)) {
-                return firstLineForField(state, state.expandedColumns(), field, geometry);
-            }
-        }
-        return -1;
-    }
-
-    /// First line of the nearest expandable field after `from`, or `-1` when
-    /// there is none. See [#previousExpandableLine].
-    private static int nextExpandableLine(
-            ScreenState.DataPreview state, int from, ModalGeometry geometry) {
-        int currentField = fieldForLine(state, from, geometry);
-        for (int field = currentField + 1; field < state.columnNames().size(); field++) {
-            if (isExpandableField(state, field, geometry)) {
-                return firstLineForField(state, state.expandedColumns(), field, geometry);
-            }
-        }
-        return -1;
     }
 
     /// Largest first-visible-line the body can scroll to.
