@@ -49,6 +49,37 @@ class ConvertCommandTest implements ConvertCommandContract {
         return "nonexistent.parquet";
     }
 
+    private String nestedBinaryFile() {
+        return getClass().getResource("/nested_binary_test.parquet").getPath();
+    }
+
+    /// A CSV cell has to carry the payload, not describe it — a byte count
+    /// cannot be read back. The nested positions reach the renderer through
+    /// the list / struct / map branches rather than the top-level leaf one.
+    @Test
+    void csvExportsNestedBinaryAsHex() {
+        Cli.Result result = Cli.launch("convert", "-f", nestedBinaryFile(), "--format", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output())
+                .contains("0x010100000000000000005366c0f71622f0fa1955c0")
+                .contains("0x0101000000f71622f0fa1955c000000000005366c0")
+                .doesNotContain("<21 bytes>");
+    }
+
+    /// Same contract for JSON, which renders a list / struct / map whole
+    /// rather than flattening it into one column per leaf as CSV does.
+    @Test
+    void jsonExportsNestedBinaryAsHex() {
+        Cli.Result result = Cli.launch("convert", "-f", nestedBinaryFile(), "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output())
+                .contains("0x010100000000000000005366c0f71622f0fa1955c0")
+                .contains("0x0101000000f71622f0fa1955c000000000005366c0")
+                .doesNotContain("<21 bytes>");
+    }
+
     @Test
     void outputToFile(@TempDir Path tempDir) throws IOException {
         Path out = tempDir.resolve("output.csv");
