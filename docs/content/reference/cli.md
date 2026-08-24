@@ -146,6 +146,32 @@ hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
 `--kv-key` exits non-zero if the file has no entry under that name, or if the
 entry has no value.
 
+## Binary values
+
+A `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column with no logical-type annotation
+carries bytes the schema gives no interpretation for — text from a writer that
+omitted the `STRING` annotation, or an opaque payload such as WKB geometry, a
+Protobuf message or a hash. Every command decides from the bytes themselves:
+well-formed UTF-8 with no control characters prints as text, anything else
+prints as `0x`-prefixed lowercase hex. The same rule applies to values,
+dictionary entries and min/max statistics alike, and to a byte-backed logical
+type whose payload length rules out its own decoder.
+
+The hex is complete. Where it does not fit, it is capped and marked the same way
+a long string is — with `…` in `dive` and `...` in the `inspect` tables — so
+`convert` and `print --no-truncate` carry the whole value while a narrow cell
+shows a marked prefix.
+
+```shell
+# A GeoParquet 1.x geometry column: unannotated BYTE_ARRAY holding WKB
+hardwood print -n 1 -c geometry -f places.parquet
+# | 0x010100000000000000005366c0f71622f0fa1955c0 |
+
+hardwood inspect pages -c geometry -f places.parquet
+# | Min                  | Max                  |
+# | 0x010100000000000... | 0x0101000000ffffb... |
+```
+
 ## Interactive exploration (`dive`)
 
 `hardwood dive` launches a terminal UI for interactively navigating a Parquet file's structure:

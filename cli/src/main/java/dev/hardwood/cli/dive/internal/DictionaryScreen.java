@@ -16,6 +16,7 @@ import java.util.Locale;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.cli.internal.Strings;
@@ -137,13 +138,12 @@ public final class DictionaryScreen {
             return true;
         }
         if (event.isConfirm() && !filtered.isEmpty()) {
-            // Only open the modal if the displayed value was actually truncated.
-            // For numeric dictionaries like VendorID=1, the row already shows the
-            // full value, so a modal would just redraw the same character in a
-            // bigger frame.
+            // Only open the modal if the row had to truncate the value — see
+            // `isExpandable`. For numeric dictionaries like VendorID=1 the row
+            // already shows the full value, so a modal would just redraw the
+            // same character in a bigger frame.
             int idx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
-            String full = fullValue(dict, idx, col, state.logicalTypes());
-            if (full.length() <= VALUE_PREVIEW_MAX) {
+            if (!isExpandable(dict, idx, col, state.logicalTypes())) {
                 return false;
             }
             stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
@@ -258,7 +258,7 @@ public final class DictionaryScreen {
         boolean canExpand = false;
         if (dict != null && count > 0) {
             int idx = filtered.at(Math.min(state.selection(), count - 1));
-            canExpand = fullValue(dict, idx, col, state.logicalTypes()).length() > VALUE_PREVIEW_MAX;
+            canExpand = isExpandable(dict, idx, col, state.logicalTypes());
         }
         boolean hasLogical = col.logicalType() != null;
         return new Keys.Hints()
@@ -366,10 +366,18 @@ public final class DictionaryScreen {
     }
 
     /// Whether `Enter` would do anything on this entry: the modal only earns
-    /// its place when the row had to truncate the value.
+    /// its place when the row had to truncate the value. The `▶` marker, the
+    /// keybar hint and the key handler all read this, so the three cannot
+    /// disagree about what `Enter` does.
+    ///
+    /// Measured on a rendering bounded to the row rather than the whole value.
+    /// This runs for every visible row on every redraw, and a dictionary of
+    /// large payloads would otherwise be rendered in full on each keystroke; a
+    /// value the row has to cut is longer than the row either way.
     private static boolean isExpandable(Dictionary dict, int index, ColumnSchema col,
                                         boolean useLogicalType) {
-        return fullValue(dict, index, col, useLogicalType).length() > VALUE_PREVIEW_MAX;
+        return entryValue(dict, index, col, useLogicalType, VALUE_PREVIEW_MAX).length()
+                > VALUE_PREVIEW_MAX;
     }
 
     /// Whether the rows on screen include an entry `Enter` cannot open, and
@@ -395,7 +403,7 @@ public final class DictionaryScreen {
 
     private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max,
                                       boolean useLogicalType) {
-        String full = fullValue(dict, index, col, useLogicalType);
+        String full = entryValue(dict, index, col, useLogicalType, max);
         if (full.length() <= max) {
             return full;
         }
@@ -404,6 +412,11 @@ public final class DictionaryScreen {
 
     private static String fullValue(Dictionary dict, int index, ColumnSchema col,
                                     boolean useLogicalType) {
+        return entryValue(dict, index, col, useLogicalType, BinaryValues.NO_LIMIT);
+    }
+
+    private static String entryValue(Dictionary dict, int index, ColumnSchema col,
+                                     boolean useLogicalType, int maxChars) {
         Object raw = switch (dict) {
             case Dictionary.IntDictionary d -> d.values()[index];
             case Dictionary.LongDictionary d -> d.values()[index];
@@ -411,7 +424,7 @@ public final class DictionaryScreen {
             case Dictionary.DoubleDictionary d -> d.values()[index];
             case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
-        return RowValueFormatter.formatDictionaryValue(raw, col, useLogicalType);
+        return RowValueFormatter.formatDictionaryValue(raw, col, useLogicalType, maxChars);
     }
 
     private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,

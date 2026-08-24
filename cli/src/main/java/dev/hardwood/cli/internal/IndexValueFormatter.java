@@ -23,8 +23,9 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Formats raw page-index min/max bytes into a displayable string, taking the
-/// column's physical and logical type into account. String values are truncated
-/// to keep table rows readable; binary values are rendered as hex.
+/// column's physical and logical type into account. Values are truncated to
+/// keep table rows readable; binary values go through [BinaryValues], which
+/// renders them the same way the value and dictionary formatters do.
 public final class IndexValueFormatter {
 
     private static final int MAX_STRING_LEN = 20;
@@ -51,11 +52,24 @@ public final class IndexValueFormatter {
     /// render into a tight cell should keep the default `truncate=true`.
     public static String format(byte[] bytes, ColumnSchema col,
                                  boolean useLogicalType, boolean truncate) {
+        return format(bytes, col, useLogicalType, truncate,
+                truncate ? MAX_STRING_LEN : BinaryValues.NO_LIMIT);
+    }
+
+    /// Variant stating the binary budget independently of `truncate`, for a
+    /// caller that wants an untruncated rendering but only up to a width it
+    /// cares about. A gate asking "would the cell have to cut this?" compares
+    /// against `format(bytes, col, logical, false, cellWidth)` rather than
+    /// against the whole value, so the answer costs a cell rather than the
+    /// payload — the two agree, because a rendering longer than the cell is all
+    /// the gate needs to see.
+    public static String format(byte[] bytes, ColumnSchema col,
+                                 boolean useLogicalType, boolean truncate, int maxChars) {
         if (bytes == null) {
             return "-";
         }
         if (bytes.length == 0) {
-            return isStringLike(col) ? "\"\"" : "";
+            return isByteBacked(col.type()) ? "\"\"" : "";
         }
         LogicalType lt = useLogicalType ? col.logicalType() : null;
 
@@ -97,7 +111,7 @@ public final class IndexValueFormatter {
             case FLOAT -> Float.toString(StatisticsDecoder.decodeFloat(bytes));
             case DOUBLE -> Double.toString(StatisticsDecoder.decodeDouble(bytes));
             case INT96 -> HexFormat.of().formatHex(bytes);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatBinary(bytes, lt, col.type(), truncate);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatBinary(bytes, lt, truncate, maxChars);
         };
     }
 
@@ -169,8 +183,13 @@ public final class IndexValueFormatter {
         return Long.toString(v);
     }
 
-    private static String formatBinary(byte[] bytes, LogicalType lt, PhysicalType pt, boolean truncate) {
-        if (isStringLogical(lt) || (lt == null && pt == PhysicalType.BYTE_ARRAY)) {
+    /// A column annotated as text is rendered as text, control characters and
+    /// all. Everything else is a payload the annotation either describes
+    /// exactly — a UUID, an interval, a half float — or does not describe at
+    /// all, and an undescribed payload goes to [BinaryValues], which decides
+    /// text vs. binary from the bytes themselves.
+    private static String formatBinary(byte[] bytes, LogicalType lt, boolean truncate, int maxChars) {
+        if (isStringLogical(lt)) {
             return formatString(bytes, truncate);
         }
         if (lt instanceof LogicalType.UuidType && bytes.length == 16) {
@@ -180,10 +199,18 @@ public final class IndexValueFormatter {
         if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
             return RowValueFormatter.formatIntervalBytes(bytes);
         }
-        String hex = HexFormat.of().formatHex(bytes);
-        return truncate ? truncate(hex) : hex;
+        if (lt instanceof LogicalType.Float16Type && bytes.length == 2) {
+            return Float.toString(
+                    LogicalTypeConverter.convertToFloat16(bytes, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+        }
+        String rendered = BinaryValues.render(bytes, maxChars);
+        return truncate ? truncate(rendered) : rendered;
     }
 
+    /// Renders the value of a column annotated as text. Control characters are
+    /// replaced with a placeholder rather than emitted raw, since a stray
+    /// newline or carriage return in a statistic would break the table it is
+    /// rendered into.
     private static String formatString(byte[] bytes, boolean truncate) {
         String utf8 = new String(bytes, StandardCharsets.UTF_8);
         int printable = 0;
@@ -215,9 +242,11 @@ public final class IndexValueFormatter {
                 || lt instanceof LogicalType.BsonType;
     }
 
-    private static boolean isStringLike(ColumnSchema col) {
-        return isStringLogical(col.logicalType())
-                || (col.logicalType() == null && col.type() == PhysicalType.BYTE_ARRAY);
+    /// A zero-length value is only meaningful for the variable-length physical
+    /// types; rendering it as `""` distinguishes "present but empty" from the
+    /// blank cell an absent statistic leaves behind.
+    private static boolean isByteBacked(PhysicalType pt) {
+        return pt == PhysicalType.BYTE_ARRAY || pt == PhysicalType.FIXED_LEN_BYTE_ARRAY;
     }
 
     private static String truncate(String s) {

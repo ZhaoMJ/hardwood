@@ -102,16 +102,12 @@ public final class ColumnIndexScreen {
             stack.replaceTop(with(state, selected, state.filter(), false));
             return true;
         }
-        // Open the full Min/Max modal on Enter only when at least one of the
-        // selected page's values is actually truncated — `formatStat` adds an
-        // `…` suffix when it caps the value to the cell budget, so the gate
-        // is now reliable (the previous one looked for ellipses in
-        // `IndexValueFormatter.format`'s output, which doesn't add them).
+        // Open the full Min/Max modal on Enter only when the cell withheld
+        // something the modal would reveal — the same gate the `▶` marker and
+        // the keybar hint read.
         if (event.isConfirm() && !filtered.isEmpty()) {
             int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
-            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
-            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
-            if (min.endsWith("…") || max.endsWith("…")) {
+            if (isExpandable(ci, idx, col, state.logicalTypes())) {
                 stack.replaceTop(withModal(state, true));
                 return true;
             }
@@ -298,14 +294,13 @@ public final class ColumnIndexScreen {
         List<Integer> filtered = filteredPages(ci, col, state.filter());
         int count = filtered.size();
         boolean hasLogical = col.logicalType() != null;
-        // Enter opens the modal only when the selected row's Min or Max
-        // actually got truncated (ends with "…" after formatStat capping).
+        // Enter opens the modal only when the selected row's Min or Max shows
+        // less in the cell than it would in the modal — the same gate the `▶`
+        // marker and the key handler use, so the three cannot disagree.
         boolean canExpand = false;
         if (count > 0) {
-            int idx = filtered.get(Math.min(state.selection(), count - 1));
-            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
-            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
-            canExpand = min.endsWith("…") || max.endsWith("…");
+            canExpand = isExpandable(ci, filtered.get(Math.min(state.selection(), count - 1)),
+                    col, state.logicalTypes());
         }
         return new Keys.Hints()
                 .add(true, CursorPane.hints(count))
@@ -327,8 +322,11 @@ public final class ColumnIndexScreen {
                 out.add(i);
                 continue;
             }
-            String min = formatStat(ci.minValues().get(i), col, true).toLowerCase(Locale.ROOT);
-            String max = formatStat(ci.maxValues().get(i), col, true).toLowerCase(Locale.ROOT);
+            // Matched against the full rendering, not the cell: a search for
+            // part of a long bound still finds its page, even though the cell
+            // shows only a marked prefix of it.
+            String min = formatStatFull(ci.minValues().get(i), col, true).toLowerCase(Locale.ROOT);
+            String max = formatStatFull(ci.maxValues().get(i), col, true).toLowerCase(Locale.ROOT);
             if (min.contains(needle) || max.contains(needle)) {
                 out.add(i);
             }
@@ -379,11 +377,27 @@ public final class ColumnIndexScreen {
     private static final int CELL_MAX = 24;
 
     /// Whether `Enter` would do anything on this page: the modal only earns
-    /// its place when a bound was truncated to fit the cell budget, which
-    /// `formatStat` signals with a trailing ellipsis.
+    /// its place when one of the bounds shows less in the cell than it would
+    /// in the modal.
     private static boolean isExpandable(ColumnIndex ci, int page, ColumnSchema col, boolean logical) {
-        return formatStat(ci.minValues().get(page), col, logical).endsWith("…")
-                || formatStat(ci.maxValues().get(page), col, logical).endsWith("…");
+        return isAbbreviated(ci.minValues().get(page), col, logical)
+                || isAbbreviated(ci.maxValues().get(page), col, logical);
+    }
+
+    /// Whether the cell rendering withholds anything the modal would reveal.
+    ///
+    /// Compared against a rendering bounded to the cell rather than the whole
+    /// value: this runs for every visible row on every redraw, and a column of
+    /// large payloads would otherwise be rendered in full on each keystroke
+    /// just to compare two strings. A value the cell has to cut renders longer
+    /// than the cell either way, so the bounded comparison gives the same
+    /// answer.
+    private static boolean isAbbreviated(byte[] bytes, ColumnSchema col, boolean logical) {
+        if (bytes == null) {
+            return false;
+        }
+        return !formatStat(bytes, col, logical)
+                .equals(IndexValueFormatter.format(bytes, col, logical, false, CELL_MAX));
     }
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
@@ -395,6 +409,10 @@ public final class ColumnIndexScreen {
             return full;
         }
         return full.substring(0, CELL_MAX - 1) + "…";
+    }
+
+    private static String formatStatFull(byte[] bytes, ColumnSchema col, boolean logical) {
+        return bytes == null ? "—" : IndexValueFormatter.format(bytes, col, logical, false);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area, String message) {

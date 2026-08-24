@@ -1167,6 +1167,65 @@ class DiveStateTest {
         }
     }
 
+    /// The cell caps a 21-byte WKB Point's hex at the cell budget while the
+    /// modal shows it whole, so `Enter` has something to reveal. The keybar
+    /// hint, the `▶` marker and the key handler all read the same gate, so a
+    /// hint that offers `Enter` is the observable proof they agree.
+    @Test
+    void columnIndexOffersEnterForAnOpaqueBinaryBound() throws Exception {
+        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").getPath());
+        try (ParquetModel binaryModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            int blob = columnIndexOf(binaryModel, "blob");
+            ScreenState.ColumnIndexView state =
+                    new ScreenState.ColumnIndexView(0, blob, 0, "", false, true, false);
+
+            assertThat(ColumnIndexScreen.keybarKeys(state, binaryModel))
+                    .contains("[Enter] view min/max");
+
+            NavigationStack stack = rooted(state);
+            ColumnIndexScreen.handle(key(KeyCode.ENTER), binaryModel, stack);
+            assertThat(((ScreenState.ColumnIndexView) stack.top()).modalOpen()).isTrue();
+        }
+    }
+
+    /// The `▶` marker, the keybar hint and the key handler read one gate, so
+    /// what the screen advertises is what `Enter` does. Both arms matter: a
+    /// 3072-byte payload hexes far past the row and opens, while a 21-byte WKB
+    /// Point hexes to 44 characters, fits the row whole, and must not — a modal
+    /// there would redraw what the row already shows.
+    @Test
+    void dictionaryOffersEnterOnlyForAnEntryTheRowHadToTruncate() throws Exception {
+        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").getPath());
+        try (ParquetModel binaryModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            assertDictionaryExpandable(binaryModel, "var.value", true);
+            assertDictionaryExpandable(binaryModel, "blob", false);
+        }
+    }
+
+    private void assertDictionaryExpandable(ParquetModel model, String column, boolean expandable) {
+        ScreenState.DictionaryView state = new ScreenState.DictionaryView(
+                0, columnIndexOf(model, column), 0, false, "", false, true, true);
+
+        assertThat(DictionaryScreen.keybarKeys(state, model))
+                .as("keybar hint for %s", column)
+                .matches(hints -> hints.contains("[Enter] view full value") == expandable);
+
+        NavigationStack stack = rooted(state);
+        DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(((ScreenState.DictionaryView) stack.top()).modalOpen())
+                .as("Enter opens the modal for %s", column)
+                .isEqualTo(expandable);
+    }
+
+    private static int columnIndexOf(ParquetModel model, String name) {
+        for (int i = 0; i < model.schema().getColumns().size(); i++) {
+            if (model.schema().getColumn(i).fieldPath().toString().equals(name)) {
+                return i;
+            }
+        }
+        throw new IllegalArgumentException("no such column: " + name);
+    }
+
     private NavigationStack rooted(ScreenState child) {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));

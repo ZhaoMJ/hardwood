@@ -5359,3 +5359,74 @@ pq.write_table(
 print("\nGenerated size_statistics_test.parquet:")
 print("  - Schema: name: string, tags: list<int32>, score: double")
 print("  - 4 rows, one row group: SizeStatistics per chunk, histograms in the page index")
+
+# Unannotated BYTE_ARRAY at every nesting position (#1012).
+# A bare BYTE_ARRAY carries bytes the schema gives no interpretation for, and the
+# CLI decides text vs. binary from the bytes themselves. `convert` has to carry
+# the value rather than describe it, so it renders binary as full hex — including
+# for a payload nested inside a list, a struct or a map, which reach the renderer
+# by a different path than a top-level leaf.
+# The payload is a 21-byte WKB Point, the shape GeoParquet 1.x stores in a bare
+# BYTE_ARRAY geometry column: too long for a table cell and not valid UTF-8.
+_wkb_point = bytes.fromhex('010100000000000000005366c0f71622f0fa1955c0')
+_wkb_point_2 = bytes.fromhex('0101000000f71622f0fa1955c000000000005366c0')
+# The same payload in a FIXED_LEN_BYTE_ARRAY column, at the same positions.
+# The two physical types render identically; the pair is here so a change that
+# reintroduced a per-type rule would be caught.
+#
+# A Variant column carries a BINARY payload far past any cell budget. The
+# record modal renders a value whole, so the payload is the tripwire for a
+# budget leaking into that path: it would be cut with nothing to mark the cut.
+_variant_blob = bytes(range(256)) * 12  # 3072 bytes, never valid UTF-8
+_variant_binary_value = (bytes([0x3C])                       # primitive header, type 15 = binary
+                         + len(_variant_blob).to_bytes(4, 'little')
+                         + _variant_blob)
+_nested_binary_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('blob', pa.binary(), True),
+    ('blobs', pa.list_(pa.binary())),
+    ('holder', pa.struct([('payload', pa.binary())])),
+    ('by_name', pa.map_(pa.string(), pa.binary())),
+    ('fixed', pa.binary(21), True),
+    ('fixeds', pa.list_(pa.binary(21))),
+    ('fixed_holder', pa.struct([('payload', pa.binary(21))])),
+    ('fixed_by_name', pa.map_(pa.string(), pa.binary(21))),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+_nested_binary_table = pa.table({
+    'id': pa.array([1, 2], pa.int32()),
+    'blob': [_wkb_point, None],
+    'blobs': [[_wkb_point, _wkb_point_2], []],
+    'holder': [{'payload': _wkb_point}, {'payload': None}],
+    'by_name': [[('geom', _wkb_point)], []],
+    'fixed': pa.array([_wkb_point, None], pa.binary(21)),
+    'fixeds': pa.array([[_wkb_point, _wkb_point_2], []], pa.list_(pa.binary(21))),
+    'fixed_holder': pa.array([{'payload': _wkb_point}, {'payload': None}],
+                             pa.struct([('payload', pa.binary(21))])),
+    'fixed_by_name': pa.array([[('geom', _wkb_point)], []], pa.map_(pa.string(), pa.binary(21))),
+    'var': [
+        {'metadata': _empty_metadata, 'value': _variant_binary_value},
+        {'metadata': _empty_metadata, 'value': bytes([0x04])},
+    ],
+}, schema=_nested_binary_schema)
+pq.write_table(
+    _nested_binary_table,
+    'core/src/test/resources/nested_binary_test.parquet',
+    # Dictionary-encoded, as GeoParquet writers encode geometry, so the dive
+    # dictionary screen has opaque entries as well as opaque bounds.
+    use_dictionary=True,
+    compression=None,
+    write_statistics=True,
+    write_page_index=True,
+)
+annotate_group_as_variant('core/src/test/resources/nested_binary_test.parquet', 'var')
+
+print("\nGenerated nested_binary_test.parquet:")
+print("  - Bare BYTE_ARRAY (WKB Point payload) at top level, as a list element,")
+print("    as a struct field and as a map value, and the same four positions")
+print("    again as FIXED_LEN_BYTE_ARRAY(21)")
+print("  - a VARIANT column whose first row holds a 3072-byte BINARY payload")
+print("  - page index written, so the dive column-index screen has opaque bounds")
