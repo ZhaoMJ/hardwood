@@ -22,6 +22,7 @@ RUN microdnf install -y --nodocs \
       glibc-devel \
       zlib-devel \
       file \
+      poppler-utils \
       vim-common \
       util-linux-script \
       fontconfig \
