@@ -642,7 +642,8 @@ public class RowGroupIterator {
                         neededPages, groups, handles,
                         allPages.get(0).offset(),
                         columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name());
+                        context, workItem.rowGroupIndex(), inputFile.name(),
+                        inputFile);
             }
             catch (IOException e) {
                 throw new UncheckedIOException(ExceptionContext.filePrefix(inputFile.name())
@@ -814,8 +815,17 @@ public class RowGroupIterator {
         int groupFirstPage = 0;
         int groupPageCount = 1;
 
-        // Extend first group backwards to include dictionary prefix
-        if (dictStart > 0 && dictStart < groupStart) {
+        // Extend first group backwards to include dictionary prefix, subject to the same
+        // PAGE_COALESCE_GAP_BYTES threshold applied to every forward merge in this function.
+        // An unconditional backwards extension over a large compressed chunk (e.g. a file where
+        // surviving pages sit near the tail of the chunk) would span the entire
+        // chunk even when only the last few pages are needed, defeating the page-filter entirely.
+        // Applying the gap check is safe: the decoder fetches the dictionary page on demand from
+        // DictionaryParser when the first data page references it, so omitting the backwards
+        // extension does not break dictionary decoding — it merely issues a separate read for the
+        // dictionary rather than absorbing it into the first data-page fetch. See issue #1037.
+        if (dictStart > 0 && dictStart < groupStart
+                && (groupStart - dictStart) <= PAGE_COALESCE_GAP_BYTES) {
             groupStart = dictStart;
         }
 

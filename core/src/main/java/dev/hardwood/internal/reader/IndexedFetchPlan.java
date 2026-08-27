@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
@@ -38,6 +39,12 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final HardwoodContextImpl context;
     private final int rowGroupIndex;
     private final String fileName;
+    /// The underlying file, kept for dictionary fallback reads when the gap between the
+    /// dictionary page and the first surviving data page exceeds PAGE_COALESCE_GAP_BYTES
+    /// and coalescePages() did not extend the first chunk handle backwards to cover the
+    /// dictionary.  In that case parseDictionary() issues a direct readRange() rather than
+    /// slicing into the (too-short) first chunk handle.
+    private final InputFile inputFile;
 
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
@@ -45,7 +52,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                               long firstDataPageOffset,
                               ColumnSchema columnSchema, ColumnChunk columnChunk,
                               HardwoodContextImpl context,
-                              int rowGroupIndex, String fileName) {
+                              int rowGroupIndex, String fileName,
+                              InputFile inputFile) {
         this.neededPages = neededPages;
         this.pageGroups = pageGroups;
         this.chunkHandles = chunkHandles;
@@ -55,6 +63,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         this.context = context;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
+        this.inputFile = inputFile;
     }
 
     @Override
@@ -136,10 +145,11 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                                    long firstDataPageOffset,
                                    ColumnSchema columnSchema, ColumnChunk columnChunk,
                                    HardwoodContextImpl context,
-                                   int rowGroupIndex, String fileName) {
+                                   int rowGroupIndex, String fileName,
+                                   InputFile inputFile) {
         return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles,
                 firstDataPageOffset, columnSchema, columnChunk, context,
-                rowGroupIndex, fileName);
+                rowGroupIndex, fileName, inputFile);
     }
 
     /// Iterator that lazily parses the dictionary on first access and yields
@@ -217,7 +227,25 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             }
 
             int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictAreaStart);
-            ByteBuffer dictRegion = chunkHandles.get(0).slice(dictAreaStart, dictRegionSize);
+            ByteBuffer dictRegion;
+            if (!chunkHandles.isEmpty()
+                    && dictAreaStart >= chunkHandles.get(0).fileOffset()) {
+                // Dictionary is inside the first (coalesced) chunk handle — zero-copy slice.
+                dictRegion = chunkHandles.get(0).slice(dictAreaStart, dictRegionSize);
+            }
+            else {
+                // The gap between the dictionary page and the first surviving data page exceeded
+                // PAGE_COALESCE_GAP_BYTES, so coalescePages() did not extend the first chunk
+                // handle backwards to cover the dictionary.  Issue a direct read for the
+                // dictionary region alone (same pattern as ChunkHandle.fetchData).
+                try {
+                    dictRegion = inputFile.readRange(dictAreaStart, dictRegionSize);
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException("Failed to fetch dictionary region for column '"
+                            + columnSchema.name() + "'", e);
+                }
+            }
 
             try {
                 return DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
