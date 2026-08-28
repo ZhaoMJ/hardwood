@@ -48,21 +48,26 @@ class IteratorTrackingTest {
                         .isZero();
             }
 
-            // The row-reader and multi-column paths share one iterator across
-            // sibling readers, so no individual child owns it and closing them
-            // leaves it tracked until the parent closes. Only the single-column
-            // path hands out an iterator its reader exclusively owns.
+            // ColumnReaders owns the iterator its sibling readers share and closes
+            // it after the last of them, so a multi-column read deregisters like a
+            // single-column one. The row-reader path still shares an iterator no
+            // child owns, so it remains tracked until the parent closes.
             try (RowReader rows = reader.rowReader()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }
             }
+            assertThat(reader.trackedIteratorCount())
+                    .as("the row-reader path still leaves its iterator to the parent")
+                    .isEqualTo(1);
             try (ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id"))) {
                 while (columns.nextBatch()) {
                     // drain
                 }
             }
-            assertThat(reader.trackedIteratorCount()).isEqualTo(2);
+            assertThat(reader.trackedIteratorCount())
+                    .as("a closed ColumnReaders must not leave its iterator behind")
+                    .isEqualTo(1);
         }
     }
 

@@ -52,6 +52,22 @@ public class ColumnReaders implements AutoCloseable {
     /// lockstep and compacts each to the matching records per batch. `null` on
     /// the plain projection path.
     private final FilterCoordinator coordinator;
+    /// The shared iterator these readers decode through, closed by [#close()]
+    /// once every worker is down. Non-null whenever the owning
+    /// [ParquetFileReader] created an iterator for this projection - which is
+    /// always, including the no-rows case - because no individual child
+    /// [ColumnReader] owns it: `createFromIterator` is passed `null` for its
+    /// `ownedIterator` on every multi-column path, so without this the iterator
+    /// stayed registered on the file reader until the file reader itself closed.
+    /// A long-lived reader driving many projections therefore accumulated one
+    /// work list per read, and paid a copy-on-write array copy per read to do it.
+    ///
+    /// Closed *after* the readers, never before. Not because a decode task reads
+    /// through the caches it clears - a task holds its own `PageInfo` and
+    /// `FetchPlan` by reference - but because closing it deregisters this read
+    /// from the file reader, and a read is not finished until its workers are
+    /// joined. `ColumnWorker.close()` is what joins them.
+    private final RowGroupIterator ownedIterator;
     private int recordCount;
     private boolean batchAvailable;
 
@@ -61,6 +77,7 @@ public class ColumnReaders implements AutoCloseable {
                   FileSchema schema,
                   ProjectedSchema projectedSchema,
                   int batchSize) {
+        this.ownedIterator = rowGroupIterator;
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];
@@ -81,10 +98,12 @@ public class ColumnReaders implements AutoCloseable {
 
     private ColumnReaders(Map<String, ColumnReader> readersByName,
                           ColumnReader[] readersByIndex,
-                          FilterCoordinator coordinator) {
+                          FilterCoordinator coordinator,
+                          RowGroupIterator ownedIterator) {
         this.readersByName = readersByName;
         this.readersByIndex = readersByIndex;
         this.coordinator = coordinator;
+        this.ownedIterator = ownedIterator;
     }
 
     /// Builds a filtered [ColumnReaders] that returns only the records matching
@@ -124,22 +143,25 @@ public class ColumnReaders implements AutoCloseable {
         }
 
         SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
-        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine);
+        FilterCoordinator coordinator =
+                new FilterCoordinator(allReaders, payloadReaders, engine, rowGroupIterator);
         for (ColumnReader reader : allReaders) {
             reader.setCoordinator(coordinator);
         }
-        return new ColumnReaders(readersByName, payloadReaders, coordinator);
+        return new ColumnReaders(readersByName, payloadReaders, coordinator, rowGroupIterator);
     }
 
     /// Builds a [ColumnReaders] for the case where row-group pruning
     /// (statistics/bloom) dropped every row group, so no record can match.
     /// Exposes the `payloadProjected` columns as immediately-exhausted no-op
     /// readers — no worker threads, no batch buffers, no [SelectionEngine] or
-    /// [FilterCoordinator]. The shared [RowGroupIterator] is owned and closed by
-    /// the [ParquetFileReader]; these readers hold no reference to it. Used by
+    /// [FilterCoordinator]. The shared [RowGroupIterator] holds no workers in this
+    /// case but is still registered on the file reader, so it is handed over here
+    /// and released by [#close()] like any other. Used by
     /// [ParquetFileReader#buildColumnReaders] to skip the whole per-column decode
     /// setup when there is nothing to decode.
-    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected) {
+    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected,
+                                RowGroupIterator ownedIterator) {
         int payloadCount = payloadProjected.getProjectedColumnCount();
         Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
         ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
@@ -149,7 +171,7 @@ public class ColumnReaders implements AutoCloseable {
             payloadReaders[p] = reader;
             readersByName.put(columnSchema.fieldPath().toString(), reader);
         }
-        return new ColumnReaders(readersByName, payloadReaders, null);
+        return new ColumnReaders(readersByName, payloadReaders, null, ownedIterator);
     }
 
     /// Get the number of projected columns.
@@ -269,12 +291,35 @@ public class ColumnReaders implements AutoCloseable {
 
     @Override
     public void close() {
-        if (coordinator != null) {
-            coordinator.close();
-            return;
+        try {
+            if (coordinator != null) {
+                coordinator.close();
+                return;
+            }
+            RuntimeException failure = null;
+            for (ColumnReader reader : readersByIndex) {
+                try {
+                    reader.close();
+                }
+                catch (RuntimeException e) {
+                    // Keep closing: a reader left open holds worker threads and batch buffers, and the
+                    // iterator below must not be released while any of them is still draining.
+                    if (failure == null) {
+                        failure = e;
+                    }
+                    else {
+                        failure.addSuppressed(e);
+                    }
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
         }
-        for (ColumnReader reader : readersByIndex) {
-            reader.close();
+        finally {
+            if (ownedIterator != null) {
+                ownedIterator.close();
+            }
         }
     }
 }

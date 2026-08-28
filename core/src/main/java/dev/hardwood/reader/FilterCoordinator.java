@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import dev.hardwood.internal.reader.RecordFilterTally;
+import dev.hardwood.internal.reader.RowGroupIterator;
 
 /// Drives the filtered column-reader path (#624). It advances every reader of
 /// the augmented projection (payload columns plus the predicate columns) in
@@ -30,16 +31,20 @@ final class FilterCoordinator {
     /// Per-file record-filter counts for JFR. Every batch this path produces has
     /// passed through the selection, so the counts are complete for the read.
     private final RecordFilterTally tally = new RecordFilterTally();
+    /// The shared iterator, released by [#close()] after every worker is down. See there.
+    private final RowGroupIterator ownedIterator;
 
     private long generation;
     private boolean hasBatch;
     private int recordCount;
     private boolean closed;
 
-    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine) {
+    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine,
+                      RowGroupIterator ownedIterator) {
         this.allReaders = allReaders;
         this.payloadReaders = payloadReaders;
         this.engine = engine;
+        this.ownedIterator = ownedIterator;
     }
 
     long generation() {
@@ -111,8 +116,19 @@ final class FilterCoordinator {
         }
         closed = true;
         tally.close();
-        for (ColumnReader reader : allReaders) {
-            reader.rawClose();
+        try {
+            for (ColumnReader reader : allReaders) {
+                reader.rawClose();
+            }
+        }
+        finally {
+            // Also released here, and not only by the owning ColumnReaders, because
+            // columnReader(name).filter(...) hands the caller one child of a ColumnReaders it never
+            // sees: closing that child reaches this and nothing else. RowGroupIterator.close() only
+            // clears iterator-local caches and deregisters, so releasing from both places is harmless.
+            if (ownedIterator != null) {
+                ownedIterator.close();
+            }
         }
     }
 }
