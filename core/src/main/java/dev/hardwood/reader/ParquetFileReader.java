@@ -11,6 +11,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
@@ -272,7 +273,30 @@ public class ParquetFileReader implements Closeable {
         FileMetaData firstFileMetaData;
         FileSchema schema;
         try {
-            firstFileFooter = ParquetMetadataReader.readFooter(first);
+            if (context.metadataSource() != null) {
+                ParsedFooter parsedFooter = context.metadataSource().footerOf(first);
+                if (parsedFooter == null) {
+                    throw new IllegalStateException(
+                            "MetadataSource returned null for " + first.name());
+                }
+                Optional<String> cachedId = parsedFooter.sourceIdentity();
+                if (cachedId.isPresent()) {
+                    Optional<String> currentId = first.identity();
+                    if (currentId.isPresent() && !cachedId.equals(currentId)) {
+                        throw new StaleMetadataException(cachedId.get(),
+                                "Cached footer identity '" + cachedId.get()
+                                        + "' does not match current file identity '"
+                                        + currentId.get() + "' for " + first.name());
+                    }
+                }
+                // Structural validation: verify the trailer matches the cached footer before
+                // trusting its chunk offsets.
+                ParquetMetadataReader.validateTrailer(first, parsedFooter);
+                firstFileFooter = parsedFooter.readFooter();
+            }
+            else {
+                firstFileFooter = ParquetMetadataReader.readFooter(first);
+            }
             firstFileMetaData = firstFileFooter.metaData();
             schema = FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(firstFileMetaData.schema()));
         }
