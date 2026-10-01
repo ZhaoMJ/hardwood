@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -14,10 +15,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.hardwood.HardwoodContext;
+import dev.hardwood.MetadataSource;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
-import dev.hardwood.reader.MetadataSource;
 
 /// Internal implementation of [HardwoodContext].
 ///
@@ -49,6 +50,10 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     /// Create a new context with a thread pool of the specified size.
     public static HardwoodContextImpl create(int threads) {
+        return create(threads, ParquetMetadataReader.FROM_FILE);
+    }
+
+    private static HardwoodContextImpl create(int threads, MetadataSource metadataSource) {
         AtomicInteger threadCounter = new AtomicInteger(0);
         ThreadFactory threadFactory = r -> {
             Thread t = new Thread(r, "hardwood-" + threadCounter.getAndIncrement());
@@ -57,7 +62,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         };
         ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, libdeflatePool, null);
+        return new HardwoodContextImpl(executor, libdeflatePool, metadataSource);
     }
 
     /// Start building a context.
@@ -65,9 +70,8 @@ public class HardwoodContextImpl implements HardwoodContext {
         return new BuilderImpl();
     }
 
-    /// Returns the [MetadataSource] installed on this context, or {@code null} if
-    /// none was installed. Used by [dev.hardwood.reader.ParquetFileReader] to obtain
-    /// pre-parsed footers instead of reading them from disk.
+    /// The [MetadataSource] installed on this context, or [ParquetMetadataReader#FROM_FILE]
+    /// when none is.
     public MetadataSource metadataSource() {
         return metadataSource;
     }
@@ -118,32 +122,26 @@ public class HardwoodContextImpl implements HardwoodContext {
     private static final class BuilderImpl implements HardwoodContext.Builder {
 
         private int threads = Runtime.getRuntime().availableProcessors();
-        private MetadataSource metadataSource;
+        private MetadataSource metadataSource = ParquetMetadataReader.FROM_FILE;
 
         @Override
         public HardwoodContext.Builder threads(int threads) {
-            if (threads < 1) throw new IllegalArgumentException("threads must be >= 1");
+            if (threads < 1) {
+                throw new IllegalArgumentException("threads must be at least 1, but was " + threads);
+            }
             this.threads = threads;
             return this;
         }
 
         @Override
         public HardwoodContext.Builder metadataSource(MetadataSource source) {
-            this.metadataSource = source;
+            this.metadataSource = Objects.requireNonNull(source, "source");
             return this;
         }
 
         @Override
         public HardwoodContext build() {
-            AtomicInteger threadCounter = new AtomicInteger(0);
-            ThreadFactory threadFactory = r -> {
-                Thread t = new Thread(r, "hardwood-" + threadCounter.getAndIncrement());
-                t.setDaemon(true);
-                return t;
-            };
-            ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
-            LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-            return new HardwoodContextImpl(executor, libdeflatePool, metadataSource);
+            return create(threads, metadataSource);
         }
     }
 }

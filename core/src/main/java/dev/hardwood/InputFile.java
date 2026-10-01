@@ -68,15 +68,27 @@ public interface InputFile extends Closeable {
     /// @return a human-readable name or path
     String name();
 
-    /// Returns a stable content identity for this file, if the implementation
-    /// can provide one.
+    /// An identifier of the file's content, which differs for different content, if the
+    /// backend can supply one without a request of its own; empty when it cannot.
     ///
-    /// hardwood uses this to detect staleness when a [dev.hardwood.reader.MetadataSource]
-    /// returns cached metadata: if the identity returned here differs from the one
-    /// recorded in the [dev.hardwood.reader.ParsedFooter], a
-    /// [dev.hardwood.reader.StaleMetadataException] is thrown before any data is read.
+    /// Resolved by [#open()] and fixed for the file's lifetime: it names the content the file was
+    /// opened against, not the content at its location at the time of the call. A
+    /// [dev.hardwood.metadata.ParsedFooter] records the identity of the file it was read from,
+    /// and a reader compares the two before using a footer a [MetadataSource] supplied.
+    ///
+    /// | Backend | Identity |
+    /// |---|---|
+    /// | Local file ([#of(Path)]) | the file's size, modification time and file key (or absolute path where the file system has no file keys), read when it is opened |
+    /// | S3 | the object's `ETag` |
+    /// | In-memory ([#of(ByteBuffer)]) | empty |
     ///
     /// The default implementation returns empty.
+    ///
+    /// @return the identity, or empty when the backend has none
+    /// @throws IOException if the identity cannot be determined
+    /// @throws IllegalStateException if the implementation resolves its identity in [#open()]
+    ///         and [#open()] has not been called
+    @Experimental
     default Optional<String> identity() throws IOException {
         return Optional.empty();
     }

@@ -55,6 +55,9 @@ public class MappedInputFile implements InputFile {
     private FileChannel channel;
     private long size;
 
+    /// Resolved by [#open()]; `null` before it.
+    private Optional<String> identity;
+
     public MappedInputFile(Path path) {
         this.path = path;
         this.name = path.getFileName().toString();
@@ -65,6 +68,10 @@ public class MappedInputFile implements InputFile {
         if (wholeFile != null || channel != null) {
             return;
         }
+        // Stat before opening: should the file be replaced in between, the identity names the
+        // content the path held before, which no later open finds again, so a footer recorded
+        // against it is never taken for the content that was mapped.
+        Optional<String> resolvedIdentity = identityOf(path, Files.readAttributes(path, BasicFileAttributes.class));
         FileChannel ch = FileChannel.open(path, StandardOpenOption.READ);
         boolean keepOpen = false;
         try {
@@ -77,6 +84,7 @@ public class MappedInputFile implements InputFile {
             else {
                 wholeFile = map(ch, 0L, fileSize);
             }
+            identity = resolvedIdentity;
         }
         finally {
             if (!keepOpen) {
@@ -126,12 +134,22 @@ public class MappedInputFile implements InputFile {
         return name;
     }
 
+    /// The file's size, modification time and file key, as read when it was opened. The
+    /// modification time carries the file system's full precision. Where the file system has no
+    /// file key, the file's absolute path takes its place, so that two files of the same size
+    /// and modification time do not share an identity.
     @Override
-    public Optional<String> identity() throws IOException {
-        BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
-        return Optional.of(path.toAbsolutePath()
-                + ":" + attrs.size()
-                + ":" + attrs.lastModifiedTime().toMillis());
+    public Optional<String> identity() {
+        if (identity == null) {
+            throw new IllegalStateException("File not opened: " + name);
+        }
+        return identity;
+    }
+
+    private static Optional<String> identityOf(Path path, BasicFileAttributes attributes) {
+        Object fileKey = attributes.fileKey();
+        return Optional.of(attributes.size() + ":" + attributes.lastModifiedTime().toInstant() + ":"
+                + (fileKey != null ? fileKey : path.toAbsolutePath().normalize()));
     }
 
     @Override

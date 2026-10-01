@@ -8,44 +8,83 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.util.Objects;
 import java.util.Optional;
 
-/// Thrown when a [MetadataSource] returns a [ParsedFooter] whose
-/// [ParsedFooter#sourceIdentity()] does not match the current
-/// [dev.hardwood.InputFile#identity()] of the file being opened.
+import dev.hardwood.Experimental;
+import dev.hardwood.InputFile;
+import dev.hardwood.MetadataSource;
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.metadata.ParsedFooter;
+
+/// Raised when the footer a [MetadataSource] supplied does not describe the file being read.
 ///
-/// This indicates that the file content has changed since the cached footer was
-/// read. The caller should invalidate the cache entry identified by
-/// [#sourceIdentity()] and retry:
+/// The file itself is intact. Evicting the footer the source served for the file and opening a
+/// new reader, so that the source reads the footer afresh, is the remedy:
 ///
 /// ```java
 /// try {
-///     read(file);
-/// } catch (StaleMetadataException e) {
-///     e.sourceIdentity().ifPresent(id -> cache.invalidate(file.name()));
-///     read(file);  // MetadataSource will re-read the footer
+///     read(path);
+/// }
+/// catch (StaleMetadataException e) {
+///     cache.evict(e.fileName());
+///     read(path);
 /// }
 /// ```
 ///
-/// This exception is only thrown when both [ParsedFooter#sourceIdentity()] and
-/// [dev.hardwood.InputFile#identity()] are present and disagree. If either is
-/// empty no staleness check is performed and no exception is thrown.
+/// The reader raises it before reading any data of the file.
+@Experimental
 public class StaleMetadataException extends IOException {
 
-    private final Optional<String> sourceIdentity;
-
-    /// @param sourceIdentity the identity token carried by the stale [ParsedFooter]
-    /// @param message        a human-readable description of the conflict
-    public StaleMetadataException(String sourceIdentity, String message) {
-        super(message);
-        this.sourceIdentity = Optional.ofNullable(sourceIdentity);
+    /// The check the supplied footer failed.
+    public enum Check {
+        /// The footer's [ParsedFooter#sourceIdentity()] differs from the file's
+        /// [InputFile#identity()]. Made only when both are present.
+        IDENTITY,
+        /// The footer locates data past the end of the file.
+        STRUCTURE,
+        /// The file's length, or the footer length its trailer records, differs from those the
+        /// footer was read with.
+        TRAILER
     }
 
-    /// The content-identity token from the stale cached footer, if present.
-    ///
-    /// Pass this to your cache's invalidation method to evict precisely the entry
-    /// that is out of date rather than clearing the whole cache.
+    private final String fileName;
+    private final Check check;
+    private final Optional<String> sourceIdentity;
+    private final Optional<String> fileIdentity;
+
+    /// @param fileName the [InputFile#name()] of the file being read
+    /// @param check the check the footer failed
+    /// @param sourceIdentity the footer's [ParsedFooter#sourceIdentity()]
+    /// @param fileIdentity the file's [InputFile#identity()]
+    /// @param detail what the check found
+    public StaleMetadataException(String fileName, Check check, Optional<String> sourceIdentity,
+            Optional<String> fileIdentity, String detail) {
+        super(ExceptionContext.filePrefix(fileName)
+                + "Footer from the MetadataSource does not describe the file: " + detail);
+        this.fileName = Objects.requireNonNull(fileName, "fileName");
+        this.check = Objects.requireNonNull(check, "check");
+        this.sourceIdentity = Objects.requireNonNull(sourceIdentity, "sourceIdentity");
+        this.fileIdentity = Objects.requireNonNull(fileIdentity, "fileIdentity");
+    }
+
+    /// The [InputFile#name()] of the file being read.
+    public String fileName() {
+        return fileName;
+    }
+
+    /// The check the supplied footer failed.
+    public Check check() {
+        return check;
+    }
+
+    /// The identity of the file the supplied footer was read from; empty when it had none.
     public Optional<String> sourceIdentity() {
         return sourceIdentity;
+    }
+
+    /// The identity of the file being read; empty when it has none.
+    public Optional<String> fileIdentity() {
+        return fileIdentity;
     }
 }
