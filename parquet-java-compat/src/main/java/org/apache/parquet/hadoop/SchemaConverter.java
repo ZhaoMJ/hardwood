@@ -34,25 +34,26 @@ class SchemaConverter {
         SchemaNode.GroupNode root = fileSchema.getRootNode();
         List<Type> fields = new ArrayList<>();
         for (SchemaNode child : root.children()) {
-            fields.add(toType(child));
+            fields.add(toType(fileSchema, child));
         }
         return new MessageType(fileSchema.getName(), fields);
     }
 
-    private static Type toType(SchemaNode node) {
+    private static Type toType(FileSchema fileSchema, SchemaNode node) {
         Type.Repetition repetition = toRepetition(node.repetitionType());
 
         if (node instanceof SchemaNode.PrimitiveNode primitive) {
             return new PrimitiveType(
                     repetition,
                     toPrimitiveTypeName(primitive.type()),
+                    typeLength(fileSchema, primitive),
                     primitive.name(),
                     toOriginalType(LogicalTypeAnnotations.of(primitive.type(), primitive.logicalType())));
         }
         else if (node instanceof SchemaNode.GroupNode group) {
             List<Type> children = new ArrayList<>();
             for (SchemaNode child : group.children()) {
-                children.add(toType(child));
+                children.add(toType(fileSchema, child));
             }
             return new GroupType(
                     repetition,
@@ -61,6 +62,17 @@ class SchemaConverter {
                     children);
         }
         throw new IllegalArgumentException("Unknown schema node type: " + node.getClass());
+    }
+
+    /// The width a `FIXED_LEN_BYTE_ARRAY` declares, which parquet-java reports as the type length;
+    /// `0` for every other physical type, as parquet-java reports it. A `FIXED_LEN_BYTE_ARRAY` that
+    /// declares no width reports `0` too, and is refused by name once its values are read.
+    private static int typeLength(FileSchema fileSchema, SchemaNode.PrimitiveNode primitive) {
+        if (primitive.type() != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return 0;
+        }
+        Integer width = fileSchema.getColumn(primitive.columnIndex()).typeLength();
+        return width == null ? 0 : width;
     }
 
     private static Type.Repetition toRepetition(RepetitionType repetition) {

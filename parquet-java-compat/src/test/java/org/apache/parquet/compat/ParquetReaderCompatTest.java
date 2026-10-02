@@ -119,6 +119,22 @@ class ParquetReaderCompatTest {
         }
     }
 
+    /// A `FIXED_LEN_BYTE_ARRAY` column reports the width it declares, and a column of any other
+    /// physical type reports none, as parquet-java does.
+    @Test
+    void testFixedLenByteArrayReportsItsWidth() throws Exception {
+        assertThat(typeLength("flba12_timestamp_test.parquet", "utc_ns")).isEqualTo(12);
+        assertThat(typeLength("compat_flba_4.parquet", "v")).isEqualTo(4);
+        assertThat(typeLength("plain_uncompressed.parquet", "id")).isZero();
+    }
+
+    private static int typeLength(String file, String column) throws Exception {
+        Path path = new Path("../core/src/test/resources/" + file);
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build()) {
+            return reader.read().getType().getType(column).asPrimitiveType().getTypeLength();
+        }
+    }
+
     /// A nanosecond `TIME` or `TIMESTAMP` has no `OriginalType`, since no converted type carries
     /// nanoseconds, and an `INTERVAL` column has `INTERVAL`, as parquet-java reports for both.
     @Test
