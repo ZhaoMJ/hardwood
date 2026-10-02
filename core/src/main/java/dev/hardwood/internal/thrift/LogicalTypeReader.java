@@ -136,14 +136,23 @@ public class LogicalTypeReader {
 
         ThriftCompactReader.requireFields(ThriftStruct.DECIMAL_TYPE, seen, BOTH_FIELDS);
 
-        // Validate that the pair is one the annotation admits: the record rejects a scale above
-        // the precision as a caller error, which a file carrying one is not.
-        if (scale < 0 || precision <= 0 || scale > precision) {
-            throw new ParquetReadException(
-                    "Invalid DecimalType: scale=" + scale + ", precision=" + precision);
-        }
-
+        requireDecimalDigits("DecimalType", scale, precision);
         return LogicalType.decimal(precision, scale);
+    }
+
+    /// Refuses a `DECIMAL` whose pair the format does not admit: "Scale must be zero or a positive
+    /// integer less than or equal to the precision. Precision is required and must be a non-zero
+    /// positive integer." The record rejects such a pair as a caller's error, which a file
+    /// carrying one is not, so the union's `DecimalType` and a legacy `DECIMAL`'s schema element
+    /// are both refused here, where they are parsed.
+    ///
+    /// @param subject what carries the pair, as the message names it
+    /// @param precision the declared precision, `null` where the footer omits it
+    static void requireDecimalDigits(String subject, int scale, Integer precision) {
+        if (precision == null || scale < 0 || precision <= 0 || scale > precision) {
+            throw new ParquetReadException("Invalid " + subject + ": scale=" + scale + ", precision="
+                    + (precision == null ? "absent" : precision));
+        }
     }
 
     private static LogicalType.TimeType readTimeType(ThriftCompactReader reader, int header) {

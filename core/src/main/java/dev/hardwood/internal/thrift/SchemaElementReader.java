@@ -121,6 +121,14 @@ public class SchemaElementReader {
         if (name == null) {
             throw ThriftCompactReader.missingFields(ThriftStruct.SCHEMA_ELEMENT, 4);
         }
+        // A legacy DECIMAL standing alone on a primitive takes its digits from this element;
+        // beside a union member the reader recognizes, the union carries its own and these decide
+        // nothing. On a group it is no annotation the group can carry, and the schema drops it.
+        boolean unionDecides = logicalType != null && !(logicalType instanceof LogicalType.NullType);
+        if (type != null && convertedType == ConvertedType.DECIMAL && !unionDecides) {
+            LogicalTypeReader.requireDecimalDigits("DECIMAL converted type on column '" + name + "'",
+                    scale == null ? 0 : scale, precision);
+        }
 
         return new ReadElement(
                 new SchemaElement(name, type, typeLength, repetitionType, numChildren, convertedType, scale, precision, fieldId, logicalType),
