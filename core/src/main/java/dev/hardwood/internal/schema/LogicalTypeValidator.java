@@ -96,7 +96,6 @@ public class LogicalTypeValidator {
                 + expected + ", not " + typeLength + " (column " + columnName + ")");
     }
 
-
     /// `UNKNOWN` annotates a column of any physical type whose every value is null, which a
     /// `REQUIRED` column can never be: no value it could legally hold matches the annotation,
     /// and reading one back fails on the null the annotation promises.
@@ -104,35 +103,6 @@ public class LogicalTypeValidator {
         if (repetition == RepetitionType.REQUIRED) {
             throw new IllegalArgumentException("UNKNOWN annotates a column holding only nulls, so it cannot be "
                     + "REQUIRED (column " + columnName + ")");
-        }
-    }
-
-    /// A `TIMESTAMP` counts its unit in an `INT64` or in a `FIXED_LEN_BYTE_ARRAY(12)`.
-    private static void validateTimestamp(String columnName, LogicalType logicalType, PhysicalType type,
-                                          Integer typeLength) {
-        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            requireFixed(columnName, logicalType, type, typeLength, Flba12Timestamps.WIDTH);
-            return;
-        }
-        if (type != PhysicalType.INT64) {
-            throw new IllegalArgumentException(logicalType + " annotates an INT64 or a FIXED_LEN_BYTE_ARRAY(12) "
-                    + "column, not " + type + " (column " + columnName + ")");
-        }
-    }
-
-    /// A `DECIMAL`'s precision must fit the digits its physical representation can hold, as
-    /// [#maxDecimalPrecision] counts them.
-    private static void validateDecimal(String columnName, PhysicalType type, Integer typeLength,
-                                        LogicalType.DecimalType decimal) {
-        long maxPrecision = switch (type) {
-            case INT32, INT64, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> maxDecimalPrecision(type, typeLength);
-            default -> throw new IllegalArgumentException("DECIMAL is not valid on physical type " + type
-                    + " (column " + columnName + "); use INT32, INT64, BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY");
-        };
-        if (decimal.precision() > maxPrecision) {
-            throw new IllegalArgumentException("DECIMAL precision " + decimal.precision()
-                    + " exceeds the maximum " + maxPrecision + " a " + type
-                    + " can represent on column " + columnName);
         }
     }
 
@@ -165,23 +135,6 @@ public class LogicalTypeValidator {
                     "A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not " + length);
         }
         return new BigDecimal(8L * length - 1).multiply(LOG10_2).longValue();
-    }
-
-    private static void require(String columnName, LogicalType logicalType, PhysicalType actual,
-                                PhysicalType expected) {
-        if (actual != expected) {
-            throw new IllegalArgumentException(logicalType + " annotates a " + expected + " column, not "
-                    + actual + " (column " + columnName + ")");
-        }
-    }
-
-    private static void requireFixed(String columnName, LogicalType logicalType, PhysicalType actual,
-                                     Integer typeLength, int expectedLength) {
-        require(columnName, logicalType, actual, PhysicalType.FIXED_LEN_BYTE_ARRAY);
-        if (typeLength == null || typeLength != expectedLength) {
-            throw new IllegalArgumentException(logicalType + " annotates a FIXED_LEN_BYTE_ARRAY of length "
-                    + expectedLength + ", not " + typeLength + " (column " + columnName + ")");
-        }
     }
 
     private static IllegalArgumentException groupAnnotation(String columnName, LogicalType logicalType) {
