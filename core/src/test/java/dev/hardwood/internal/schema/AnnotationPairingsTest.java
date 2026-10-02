@@ -16,6 +16,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -223,6 +224,30 @@ class AnnotationPairingsTest {
                 .isEqualTo(AnnotationPairings.ByteColumnOrder.NONE);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, LogicalType.nullType()))
                 .isEqualTo(AnnotationPairings.ByteColumnOrder.INT96_INSTANT);
+    }
+
+    /// `IEEE_754_TOTAL_ORDER` is defined for a `FLOAT`, a `DOUBLE` and a `FLOAT16` alone, the type
+    /// order is the annotation's, and an order this release does not recognize names nothing.
+    @Test
+    void aColumnOrderNamesAnOrderOnlyOverTheColumnsItIsDefinedFor() {
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.FLOAT, null))
+                .isTrue();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.DOUBLE, null))
+                .isTrue();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER,
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16())).isTrue();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.INT32, null))
+                .isFalse();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER,
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, null)).isFalse();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.FLOAT,
+                LogicalType.nullType())).isFalse();
+
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.TYPE_DEFINED_ORDER, PhysicalType.INT32, null))
+                .isTrue();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.TYPE_DEFINED_ORDER,
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval())).isFalse();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.UNKNOWN, PhysicalType.INT32, null)).isFalse();
     }
 
     @Test

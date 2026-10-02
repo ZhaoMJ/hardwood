@@ -198,6 +198,20 @@ class UnreadableSortOrderTest {
                 readability(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
     }
 
+    /// `parquet.thrift` on `IEEE_754_TOTAL_ORDER`: "Only columns of physical type FLOAT or
+    /// DOUBLE, or logical type FLOAT16 may use this ordering." Declared on any other column it
+    /// names no order that column's values have, so the bounds recorded in it are not read.
+    @Test
+    void boundsUnderTheTotalOrderOfANonFloatingColumnDoNotPrune() {
+        FileSchema ints = intSchema();
+        ResolvedPredicate leaf = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("v", 100), ints);
+        Statistics stats = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
+
+        assertThat(MinMaxStats.of(stats, leaf,
+                readability(ints, List.of(ColumnOrder.IEEE754_TOTAL_ORDER))).canDrop(leaf)).isFalse();
+    }
+
     @Test
     void boundsUnderTheTypeDefinedOrderStillPrune() {
         FileSchema ints = intSchema();

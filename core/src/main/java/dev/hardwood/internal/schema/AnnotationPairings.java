@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -174,6 +175,24 @@ public final class AnnotationPairings {
             case LogicalType.VariantType ignored -> throw orderAnsweredAbove(annotation);
             case LogicalType.ListType ignored -> throw orderAnsweredAbove(annotation);
             case LogicalType.MapType ignored -> throw orderAnsweredAbove(annotation);
+        };
+    }
+
+    /// Whether a file's `column_orders` entry names an order the values of a column of this
+    /// physical type and annotation have, so that the bounds recorded in it can be read.
+    ///
+    /// `TYPE_ORDER` is the order [#namesAnOrder] answers for. `IEEE_754_TOTAL_ORDER` is defined
+    /// for "columns of physical type FLOAT or DOUBLE, or logical type FLOAT16" alone, and an
+    /// order this release does not recognize names nothing it can read.
+    ///
+    /// @param order the column's entry, [ColumnOrder#TYPE_DEFINED_ORDER] where the file has none
+    public static boolean namesAnOrder(ColumnOrder order, PhysicalType type, LogicalType annotation) {
+        return switch (order) {
+            case TYPE_DEFINED_ORDER -> namesAnOrder(annotation);
+            case IEEE754_TOTAL_ORDER -> annotation == null
+                    ? type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
+                    : annotation instanceof LogicalType.Float16Type;
+            case UNKNOWN -> false;
         };
     }
 

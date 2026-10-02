@@ -28,7 +28,8 @@ import dev.hardwood.schema.FileSchema;
 ///   `GEOGRAPHY`, `VARIANT`, `LIST` and `MAP`, and asks that `INTERVAL` record no bounds at all,
 ///   and a `NULL` column stores no values to order;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
-///   as a column whose `min` / `max` are to be ignored;
+///   as a column whose `min` / `max` are to be ignored, or `IEEE_754_TOTAL_ORDER` on a column
+///   other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for;
 /// - the reader dropped the column's annotation, either because this build does not recognize
 ///   it or because the column's physical type cannot carry it. The column reads as its physical
 ///   type, but its writer recorded the bounds in the order of the annotation, which the
@@ -131,10 +132,9 @@ public final class BoundsReadability {
         boolean[] readable = new boolean[schema.getColumnCount()];
         for (int i = 0; i < readable.length; i++) {
             ColumnSchema column = schema.getColumn(i);
-            boolean orderRecognized = columnOrders.size() <= i
-                    || columnOrders.get(i) != ColumnOrder.UNKNOWN;
-            readable[i] = orderRecognized && !annotationDropped.test(i)
-                    && AnnotationPairings.namesAnOrder(column.logicalType());
+            ColumnOrder order = columnOrders.size() <= i ? ColumnOrder.TYPE_DEFINED_ORDER : columnOrders.get(i);
+            readable[i] = !annotationDropped.test(i)
+                    && AnnotationPairings.namesAnOrder(order, column.type(), column.logicalType());
         }
         return new BoundsReadability(readable);
     }

@@ -148,7 +148,7 @@ Tests: `FilterDecisionTest`, `UnitStatsTest`, `RowGroupDecideTest`.
 Comparing a literal against `min`/`max` is sound only in the order the bounds were written in. `BoundsReadability` answers, per leaf ordinal, whether that order is known. A column's bounds are unreadable when:
 
 - its annotation names no order: `INTERVAL`, `NULL`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST`, `MAP`;
-- the file's `column_orders` entry is a union member this build does not recognize (`ColumnOrder.UNKNOWN`), which `parquet.thrift` says to treat as "ignore min and max";
+- the file's `column_orders` entry is a union member this build does not recognize (`ColumnOrder.UNKNOWN`), which `parquet.thrift` says to treat as "ignore min and max", or `IEEE_754_TOTAL_ORDER` on a column other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for;
 - the reader dropped the column's annotation, because this build does not recognize it or the physical type cannot carry it. The column reads as its physical type, but the writer ordered the bounds by the annotation.
 
 Readability is a property of the file that wrote the bounds. `BoundsReadability.of(schema, footer)` is built once per file when the file is prepared (`FileMetadataCache`), indexed by that file's own leaf ordinals, and carried on `FileColumnOrdinals` beside the predicate translated to the same ordinals. An ordinal outside the file's schema is a wiring error and throws `IllegalStateException`.
@@ -157,7 +157,7 @@ The readability also records which unreadable columns have been reported. `claim
 
 `MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` then passes `BoundsReadability.ALL`. Untested.
 
-Whether an annotation names an order at all is `AnnotationPairings.namesAnOrder`, an exhaustive switch over `LogicalType`. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
+Whether an annotation names an order at all is `AnnotationPairings.namesAnOrder`, an exhaustive switch over `LogicalType`; its overload taking the file's `ColumnOrder` decides the first and second conditions above together. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
 
 `Statistics` keeps its bounds either way; metadata surfaces such as `hardwood inspect` report what the file holds.
 
