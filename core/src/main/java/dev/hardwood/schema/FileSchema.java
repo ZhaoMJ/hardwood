@@ -878,17 +878,11 @@ public class FileSchema {
     /// annotation, if any, is legal for that physical type.
     private static BuilderLeaf leaf(String name, PhysicalType type, RepetitionType repetition, Integer typeLength,
                                     LogicalType logicalType) {
-        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            if (typeLength == null || typeLength <= 0) {
-                throw new IllegalArgumentException(
-                        "FIXED_LEN_BYTE_ARRAY column " + name + " requires a positive type length");
-            }
-        }
-        else if (typeLength != null) {
+        if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength != null) {
             throw new IllegalArgumentException("A type length is only valid for a FIXED_LEN_BYTE_ARRAY column, not "
                     + type + " (" + name + ")");
         }
-        LogicalTypeValidator.validate(name, type, repetition, typeLength, logicalType);
+        LogicalTypeValidator.validateLeaf(name, type, repetition, typeLength, logicalType);
         return new BuilderLeaf(name, type, repetition, typeLength, logicalType);
     }
 

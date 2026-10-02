@@ -25,6 +25,21 @@ import dev.hardwood.metadata.RepetitionType;
 /// [dev.hardwood.internal.conversion.LogicalTypeConverter#conversionFault].
 public class LogicalTypeValidator {
 
+    /// Validates a primitive column the writer is to write: a `FIXED_LEN_BYTE_ARRAY` needs a
+    /// positive width, and the annotation, if any, has to be legal over the column. The schema
+    /// builder asks it where a leaf is declared, and the writer asks it of every column of the
+    /// schema it is created with, which may come from elsewhere.
+    ///
+    /// @throws IllegalArgumentException if the width or the annotation is not legal
+    public static void validateLeaf(String columnName, PhysicalType type, RepetitionType repetition,
+                                    Integer typeLength, LogicalType logicalType) {
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && (typeLength == null || typeLength <= 0)) {
+            throw new IllegalArgumentException(
+                    "FIXED_LEN_BYTE_ARRAY column " + columnName + " requires a positive type length");
+        }
+        validate(columnName, type, repetition, typeLength, logicalType);
+    }
+
     /// Validates a primitive column's annotation.
     ///
     /// @param columnName the column name, for the failure message

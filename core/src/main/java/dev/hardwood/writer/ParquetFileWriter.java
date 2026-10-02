@@ -27,6 +27,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.internal.BuildInfo;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.compression.CompressorFactory;
+import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.internal.writer.ColumnSource;
@@ -151,7 +152,9 @@ public final class ParquetFileWriter implements Closeable {
     /// @param schema the schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws IllegalArgumentException if the schema declares no columns
+    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
+    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    ///         its physical type cannot carry or no value can be written for
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
     ///         physical type, or a shape the writer cannot produce
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
@@ -168,8 +171,10 @@ public final class ParquetFileWriter implements Closeable {
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
     ///         physical type, a shape the writer cannot produce, or the configured codec cannot
     ///         be written
-    /// @throws IllegalArgumentException if the schema declares no columns, or an encoding policy
-    ///         names a column the schema does not have, or one its physical type cannot carry
+    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
+    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    ///         its physical type cannot carry or no value can be written for; or an encoding
+    ///         policy names a column the schema does not have, or one its physical type cannot carry
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         return create(out, schema, config, () -> new CompressorFactory().getCompressor(config.codec()));
@@ -204,6 +209,10 @@ public final class ParquetFileWriter implements Closeable {
                         "Writer does not support " + column.type() + " columns yet; column "
                                 + column.name() + " is " + column.type());
             }
+            // A schema from FileSchema.Builder has passed this where each leaf was declared; one
+            // from fromSchemaElements has not.
+            LogicalTypeValidator.validateLeaf(column.name(), column.type(), column.repetitionType(),
+                    column.typeLength(), column.logicalType());
         }
         // Settled here rather than by whichever view meets it first, so one unproducible shape
         // is one rejection, at one moment, with one wording.

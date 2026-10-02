@@ -44,7 +44,7 @@ abstract class ValueEncoder {
             case BYTE_ARRAY -> new BinaryValueEncoder(dictionary, null, startingCapacity,
                     () -> BinaryStatistics.forColumn(column, statisticsTruncationLength));
             case FIXED_LEN_BYTE_ARRAY -> new BinaryValueEncoder(dictionary,
-                    requireTypeLength(column), startingCapacity,
+                    column.typeLength(), startingCapacity,
                     () -> BinaryStatistics.forColumn(column, statisticsTruncationLength));
             default -> throw new IllegalArgumentException(
                     "Writer does not support physical type " + type + " for column " + column.name());
@@ -162,15 +162,6 @@ abstract class ValueEncoder {
     /// which does fill reaches a useful size in a few growths.
     private static final int MIN_BUFFER_VALUES = 512;
     private static final int MAX_BUFFER_VALUES = 1 << 16;
-
-
-    private static int requireTypeLength(ColumnSchema column) {
-        if (column.typeLength() == null) {
-            throw new IllegalArgumentException(
-                    "FIXED_LEN_BYTE_ARRAY column " + column.name() + " has no type length");
-        }
-        return column.typeLength();
-    }
 
     /// Rebinds to a new batch's source and resets the value read window. The dictionary and
     /// statistics persist across the batches of one column chunk.

@@ -17,6 +17,9 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
@@ -105,6 +108,37 @@ class WriterSchemaShapeTest {
                          + "what gives a repeated field a layer to be addressed through, so the writer "
                          + "cannot produce it")
                 ;
+    }
+
+    /// `FileSchema.Builder` checks a leaf where it is declared; a schema from `fromSchemaElements`
+    /// reaches the writer without that, so the writer applies the same checks when it is created.
+    /// An `UNKNOWN` column holds only nulls, which a `REQUIRED` one cannot.
+    @Test
+    void rejectsRequiredUnknownColumnFromElements() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 1),
+                SchemaElement.primitive("nothing", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        LogicalType.nullType())));
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("UNKNOWN annotates a column holding only nulls, so it cannot be REQUIRED "
+                        + "(column nothing)");
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY` without a positive width has no value the writer could encode.
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(ints = { 0, -1 })
+    void rejectsFixedLenByteArrayWithoutAWidthFromElements(Integer typeLength) {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 1),
+                new SchemaElement("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, RepetitionType.REQUIRED,
+                        null, null, null, null, null, null)));
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column raw requires a positive type length");
     }
 
     /// The same shape nested inside a struct, so the rejection is known to walk the schema

@@ -80,7 +80,7 @@ SchemaElement tag = new SchemaElement("tag", PhysicalType.INT32, 3, RepetitionTy
         null, null, null, null, null, null);
 ```
 
-`typeLength` can be `null` in raw footer metadata. A writer must provide a positive length for a `FIXED_LEN_BYTE_ARRAY` column. A data reader also needs this length to decode its values.
+`typeLength` can be `null` in raw footer metadata. A writer must provide a positive length for a `FIXED_LEN_BYTE_ARRAY` column. A data reader also needs this length to decode its values. `ParquetFileWriter.create` refuses a schema from `fromSchemaElements` that has a `FIXED_LEN_BYTE_ARRAY` column without a positive length, a `REQUIRED` column annotated `UNKNOWN`, or another annotation the writer cannot write, as `FileSchema.Builder` refuses them.
 
 ## Errors
 
