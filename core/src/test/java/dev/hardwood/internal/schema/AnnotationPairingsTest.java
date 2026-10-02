@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.math.BigInteger;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -19,6 +20,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Which pairings of physical type, annotation and width [AnnotationPairings#check] calls legal,
 /// and the fault it answers for the rest.
@@ -184,5 +186,59 @@ class AnnotationPairingsTest {
 
     private static LogicalType timestamp() {
         return LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
+    }
+
+    /// The digits a `DECIMAL` carrier holds, as [AnnotationPairings#maxDecimalPrecision] counts
+    /// them for both the writer and the reader.
+    @Test
+    void theIntegerCarriersHoldNineAndEighteenDigits() {
+        assertThat(AnnotationPairings.maxDecimalPrecision(PhysicalType.INT32)).isEqualTo(9);
+        assertThat(AnnotationPairings.maxDecimalPrecision(PhysicalType.INT64)).isEqualTo(18);
+        assertThat(AnnotationPairings.maxDecimalPrecision(PhysicalType.BYTE_ARRAY))
+                .isEqualTo(Long.MAX_VALUE);
+    }
+
+    /// Counted against the digits of the largest value each width holds, `2^(8n - 1) - 1`.
+    @Test
+    void aFixedWidthHoldsTheDigitsOfItsLargestValue() {
+        for (int width = 1; width <= 1024; width++) {
+            int exact = BigInteger.ONE.shiftLeft(8 * width - 1).subtract(BigInteger.ONE)
+                    .toString().length() - 1;
+            assertThat(AnnotationPairings.maxDecimalPrecision(width))
+                    .as("width %d", width)
+                    .isEqualTo(exact);
+        }
+    }
+
+    /// The widest width an `i32` can declare holds more digits than an `int` counts.
+    @Test
+    void theWidestWidthIsCountedWithoutOverflow() {
+        assertThat(AnnotationPairings.maxDecimalPrecision(Integer.MAX_VALUE)).isEqualTo(5_171_655_943L);
+    }
+
+    @Test
+    void aTypeThatStoresNoDecimalIsRefused() {
+        assertThatThrownBy(() -> AnnotationPairings.maxDecimalPrecision(PhysicalType.BOOLEAN))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("DECIMAL is not stored in BOOLEAN");
+    }
+
+    /// A width that is not positive has no digits to count.
+    @Test
+    void aFixedWidthThatIsNotPositiveIsRefused() {
+        assertThatThrownBy(() -> AnnotationPairings.maxDecimalPrecision(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not 0");
+        assertThatThrownBy(() -> AnnotationPairings.maxDecimalPrecision(-1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not -1");
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY`'s digits are its width's, so asking its type alone is a misuse.
+    @Test
+    void aFixedLenByteArrayTypeHasNoDigitsOfItsOwn() {
+        assertThatThrownBy(() -> AnnotationPairings.maxDecimalPrecision(PhysicalType.FIXED_LEN_BYTE_ARRAY))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A FIXED_LEN_BYTE_ARRAY DECIMAL holds the digits of its width, not of its type");
     }
 }

@@ -9,6 +9,7 @@ package dev.hardwood.internal.writer;
 
 import java.math.BigInteger;
 
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
@@ -39,13 +40,14 @@ public final class LogicalTypeValueRange {
     /// The empty range of a column annotated `UNKNOWN`, which holds only nulls.
     private static final LogicalTypeValueRange NO_VALUE = new LogicalTypeValueRange(null, 0, 0, null, 0, true);
 
+    /// Digits of unscaled value an `INT64` holds, the widest precision an integral `DECIMAL`
+    /// declares.
+    private static final int INT64_DIGITS =
+            Math.toIntExact(AnnotationPairings.maxDecimalPrecision(PhysicalType.INT64));
+
     /// Powers of ten up to the largest an `INT64` holds, so a `DECIMAL` bound needs no
     /// arithmetic per column.
     private static final long[] POWERS_OF_TEN = powersOfTen();
-
-    /// Digits of unscaled value an `INT64` holds, the widest precision an integral `DECIMAL`
-    /// declares.
-    private static final int INT64_DIGITS = 18;
 
     /// The annotation the bound comes from, named in the caller's rejection. `null` marks the
     /// unbounded range.
@@ -177,7 +179,8 @@ public final class LogicalTypeValueRange {
     /// A `TIME` bounds the value to one day of its unit, and a `DECIMAL` to the digits its
     /// precision declares. That precision never exceeds what the physical type can hold: the
     /// schema builder's `LogicalTypeValidator` refuses a wider one, and a schema read from a file
-    /// has it dropped by `LeafAnnotation.dropFault`, which counts digits the same way.
+    /// has it dropped by `LeafAnnotation.dropFault`, both counting digits by
+    /// [AnnotationPairings#maxDecimalPrecision(PhysicalType)].
     private static LogicalTypeValueRange integral(PhysicalType type, LogicalType logicalType) {
         int typeBits = type == PhysicalType.INT32 ? Integer.SIZE : Long.SIZE;
         if (logicalType instanceof LogicalType.IntType intType) {

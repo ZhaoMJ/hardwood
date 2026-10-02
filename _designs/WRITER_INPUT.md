@@ -171,7 +171,7 @@ Tests: `WriterNestedRoundTripTest`, `WriterBatchContractTest`, `ColumnarNestedCo
 
 ## Physical × logical legality
 
-An annotation is legal only on the physical types parquet-format permits. `LogicalTypeValidator` (`internal.schema`) is the single table, applied by `FileSchema.Builder` when a leaf or map key is declared, so an illegal pairing never reaches a file, where no reader could honour it. The reader applies the same pairings leniently, dropping an annotation that fails them and reading the column as its physical type (see [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)); only the writer refuses.
+An annotation is legal only on the physical types parquet-format permits. `AnnotationPairings` (`internal.schema`) is the single table, including the digits a `DECIMAL` carrier holds, and `LogicalTypeValidator` applies it from `FileSchema.Builder` when a leaf or map key is declared, so an illegal pairing never reaches a file, where no reader could honour it. The reader applies the same pairings leniently, dropping an annotation that fails them and reading the column as its physical type (see [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)); only the writer refuses.
 
 | Logical type | Physical type | Further constraints |
 |---|---|---|
@@ -197,7 +197,7 @@ An annotation is legal only on the physical types parquet-format permits. `Logic
 
 Emitting a declared annotation as both the `LogicalType` union and the legacy `converted_type` / `scale` / `precision` is part of the annotation model in [LOGICAL_TYPES.md](LOGICAL_TYPES.md). How an annotation changes the column's statistics order is in [WRITER_ENCODING.md](WRITER_ENCODING.md).
 
-Tests: `LogicalTypeValidatorTest`, `WriterLogicalTypeRoundTripTest`, `WriterFlba12TimestampTest`.
+Tests: `AnnotationPairingsTest`, `WriterLogicalTypeRoundTripTest`, `WriterFlba12TimestampTest`.
 
 ## Annotation ranges
 

@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.schema;
 
-import java.math.BigDecimal;
-
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -26,11 +24,6 @@ import dev.hardwood.metadata.RepetitionType;
 /// pairings and reads the column as its physical type: see
 /// [dev.hardwood.internal.conversion.LogicalTypeConverter#conversionFault].
 public class LogicalTypeValidator {
-
-    /// `log10(2)` to forty places, which makes [#maxFixedPrecision] exact for every width an
-    /// `i32` can declare: `(8 * length - 1) * log10(2)` never comes within `1e-11` of an
-    /// integer there, and this constant's error at the widest width is below `2e-30`.
-    private static final BigDecimal LOG10_2 = new BigDecimal("0.3010299956639811952137388947244930267681");
 
     /// Validates a primitive column's annotation.
     ///
@@ -104,37 +97,6 @@ public class LogicalTypeValidator {
             throw new IllegalArgumentException("UNKNOWN annotates a column holding only nulls, so it cannot be "
                     + "REQUIRED (column " + columnName + ")");
         }
-    }
-
-    /// The most digits a `DECIMAL` stored in `type` can have: 9 for an `INT32`, 18 for an
-    /// `INT64`, and for a `FIXED_LEN_BYTE_ARRAY` whatever the two's complement of its width
-    /// spans. A `BYTE_ARRAY` is unbounded.
-    ///
-    /// @param type the physical type the `DECIMAL` is stored in
-    /// @param typeLength the `FIXED_LEN_BYTE_ARRAY` byte length; ignored for any other type
-    /// @return the largest precision `type` holds; `Long.MAX_VALUE` for a `BYTE_ARRAY`
-    /// @throws IllegalArgumentException if `type` does not store a `DECIMAL`, or is a
-    ///         `FIXED_LEN_BYTE_ARRAY` without a positive width
-    public static long maxDecimalPrecision(PhysicalType type, Integer typeLength) {
-        return switch (type) {
-            case INT32 -> 9;
-            case INT64 -> 18;
-            case BYTE_ARRAY -> Long.MAX_VALUE;
-            case FIXED_LEN_BYTE_ARRAY -> maxFixedPrecision(typeLength);
-            default -> throw new IllegalArgumentException("DECIMAL is not stored in " + type);
-        };
-    }
-
-    /// The largest precision a two's-complement value of `length` bytes represents:
-    /// `floor(log10(2^(8 * length - 1) - 1))`. No power of two is a power of ten, so that is
-    /// `floor((8 * length - 1) * log10(2))`, which [#LOG10_2] computes without building the
-    /// power, whose size a footer's `type_length` would otherwise set.
-    private static long maxFixedPrecision(Integer length) {
-        if (length == null || length <= 0) {
-            throw new IllegalArgumentException(
-                    "A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not " + length);
-        }
-        return new BigDecimal(8L * length - 1).multiply(LOG10_2).longValue();
     }
 
     private static IllegalArgumentException groupAnnotation(String columnName, LogicalType logicalType) {

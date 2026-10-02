@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.Flba12Timestamps;
@@ -55,6 +56,11 @@ public final class AnnotationPairings {
             PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
 
     private static final Pairing LEGAL = new Legal();
+
+    /// `log10(2)` to forty places, which makes [#maxDecimalPrecision(int)] exact for every width an
+    /// `i32` can declare: `(8 * length - 1) * log10(2)` never comes within `1e-11` of an
+    /// integer there, and this constant's error at the widest width is below `2e-30`.
+    private static final BigDecimal LOG10_2 = new BigDecimal("0.3010299956639811952137388947244930267681");
 
     private AnnotationPairings() {
     }
@@ -189,7 +195,8 @@ public final class AnnotationPairings {
     /// "DECIMAL can be used to annotate the following types: int32, for 1 <= precision <= 9;
     /// int64, for 1 <= precision <= 18; fixed_len_byte_array, precision is limited by the array
     /// size, length n can store <= floor(log_10(2^(8*n - 1) - 1)) base-10 digits; byte_array,
-    /// precision is not limited". [LogicalTypeValidator#maxDecimalPrecision] counts those digits.
+    /// precision is not limited". [#maxDecimalPrecision(PhysicalType)] and [#maxDecimalPrecision(int)]
+    /// count those digits.
     private static Pairing decimalPairing(PhysicalType type, Integer typeLength,
             LogicalType.DecimalType decimal) {
         boolean held = switch (type) {
@@ -204,7 +211,44 @@ public final class AnnotationPairings {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && (typeLength == null || typeLength <= 0)) {
             return LEGAL;
         }
-        long maxPrecision = LogicalTypeValidator.maxDecimalPrecision(type, typeLength);
+        long maxPrecision = type == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                ? maxDecimalPrecision(typeLength.intValue())
+                : maxDecimalPrecision(type);
         return decimal.precision() > maxPrecision ? new Illegal(new PrecisionTooLarge(decimal.precision(), maxPrecision)) : LEGAL;
+    }
+
+    /// The most digits a `DECIMAL` stored in `type` can have: 9 for an `INT32` and 18 for an
+    /// `INT64`; a `BYTE_ARRAY` is unbounded. A `FIXED_LEN_BYTE_ARRAY`'s depend on its width, which
+    /// [#maxDecimalPrecision(int)] counts.
+    ///
+    /// @param type the physical type the `DECIMAL` is stored in
+    /// @return the largest precision `type` holds; `Long.MAX_VALUE` for a `BYTE_ARRAY`
+    /// @throws IllegalArgumentException if `type` does not store a `DECIMAL`, or is a
+    ///         `FIXED_LEN_BYTE_ARRAY`
+    public static long maxDecimalPrecision(PhysicalType type) {
+        return switch (type) {
+            case INT32 -> 9;
+            case INT64 -> 18;
+            case BYTE_ARRAY -> Long.MAX_VALUE;
+            case FIXED_LEN_BYTE_ARRAY -> throw new IllegalArgumentException(
+                    "A FIXED_LEN_BYTE_ARRAY DECIMAL holds the digits of its width, not of its type");
+            case BOOLEAN, INT96, FLOAT, DOUBLE ->
+                    throw new IllegalArgumentException("DECIMAL is not stored in " + type);
+        };
+    }
+
+    /// The most digits a `DECIMAL` stored in a `FIXED_LEN_BYTE_ARRAY` of `fixedWidth` bytes can
+    /// have, the largest precision a two's-complement value of that width represents:
+    /// `floor(log10(2^(8 * fixedWidth - 1) - 1))`. No power of two is a power of ten, so that is
+    /// `floor((8 * fixedWidth - 1) * log10(2))`, which [#LOG10_2] computes without building the
+    /// power, whose size a footer's `type_length` would otherwise set.
+    ///
+    /// @throws IllegalArgumentException if `fixedWidth` is not positive
+    public static long maxDecimalPrecision(int fixedWidth) {
+        if (fixedWidth <= 0) {
+            throw new IllegalArgumentException(
+                    "A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not " + fixedWidth);
+        }
+        return new BigDecimal(8L * fixedWidth - 1).multiply(LOG10_2).longValue();
     }
 }
