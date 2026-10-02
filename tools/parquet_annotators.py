@@ -626,10 +626,12 @@ def _find_schema_element_by_path(file_metadata, name_path):
 
 
 def annotate_element_at_path_as_interval(path: str, name_path) -> None:
-    """Annotate the SchemaElement at `name_path` (excluding the root) as INTERVAL."""
+    """Annotate the SchemaElement at `name_path` (excluding the root) as INTERVAL, as parquet-java
+    does: `converted_type=INTERVAL` beside the LogicalType union's UNKNOWN member."""
     data_before_footer, file_metadata = _read_parquet_footer(path)
     el = _find_schema_element_by_path(file_metadata, list(name_path))
-    el.logicalType = _parquet.LogicalType(INTERVAL=_parquet.IntervalType())
+    el.logicalType = _parquet.LogicalType(UNKNOWN=_parquet.NullType())
+    el.converted_type = 21  # ConvertedType.INTERVAL
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
@@ -798,13 +800,11 @@ def annotate_element_at_path_as_decimal(path: str, name_path, *,
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
-def annotate_column_as_interval(path: str, column_name: str, *, form: str = 'union') -> None:
+def annotate_column_as_interval(path: str, column_name: str, *, form: str = 'parquet-java') -> None:
     """Rewrite `path` so that the named FIXED_LEN_BYTE_ARRAY(12) column carries the INTERVAL annotation.
 
     `form` selects the footer:
 
-    - `'union'` writes the `LogicalType` union's field 9, which `parquet.thrift` reserves for
-      INTERVAL without defining a member. No writer emits it.
     - `'converted'` writes only the legacy `converted_type=INTERVAL` (value 21) and clears any
       `logicalType`, as writers predating the `LogicalType` union do.
     - `'parquet-java'` writes `converted_type=INTERVAL` beside the union's `UNKNOWN` member
@@ -815,9 +815,7 @@ def annotate_column_as_interval(path: str, column_name: str, *, form: str = 'uni
     matched = False
     for el in file_metadata.schema:
         if el.name == column_name:
-            if form == 'union':
-                el.logicalType = _parquet.LogicalType(INTERVAL=_parquet.IntervalType())
-            elif form == 'converted':
+            if form == 'converted':
                 el.logicalType = None
                 el.converted_type = 21  # ConvertedType.INTERVAL
             elif form == 'parquet-java':

@@ -3703,7 +3703,8 @@ print("  - 3 rows: INT64(age=42), STRING(email), OBJECT(preferences)")
 
 # INTERVAL logical type test
 # PyArrow writes pa.binary(12) as FIXED_LEN_BYTE_ARRAY(12); the annotation script then
-# writes LogicalType.IntervalType (field 9 in the LogicalType union) into the footer.
+# writes the footer parquet-java writes for an INTERVAL: converted_type=INTERVAL beside the
+# LogicalType union's UNKNOWN member, the union defining no INTERVAL member.
 def _interval_bytes(months, days, millis):
     return struct.pack('<III', months, days, millis)
 

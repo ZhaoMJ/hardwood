@@ -54,7 +54,6 @@ public class LogicalTypeReader {
                     case 6 -> emptyArm(reader, header, LogicalType.date()); // DATE
                     case 7 -> readTimeType(reader, header);
                     case 8 -> readTimestampType(reader, header);
-                    case 9 -> emptyArm(reader, header, LogicalType.interval()); // INTERVAL
                     case 10 -> readIntType(reader, header);
                     case 11 -> emptyArm(reader, header, LogicalType.nullType()); // NULL
                     case 12 -> emptyArm(reader, header, LogicalType.json()); // JSON

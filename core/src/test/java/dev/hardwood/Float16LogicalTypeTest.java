@@ -41,7 +41,7 @@ class Float16LogicalTypeTest {
     private static final Path FILE = Paths.get("src/test/resources/float16_logical_type_test.parquet");
 
     /// Offset of `duration`'s `LogicalType` union variant in `interval_logical_type_test.parquet`.
-    private static final int LOGICAL_TYPE_VARIANT_BYTE = 187;
+    private static final int LOGICAL_TYPE_VARIANT_BYTE = 189;
 
     // Row 0: 0.0
     // Row 1: 1.0
@@ -162,9 +162,11 @@ class Float16LogicalTypeTest {
         assertThat(filtered.get(3)).isNull();
     }
 
-    /// Byte 187 is the `LogicalType` union variant on `duration`, a `FIXED_LEN_BYTE_ARRAY(12)`
-    /// column the file annotates `INTERVAL` (variant 9). Relabelling it `FLOAT16` (variant 15)
-    /// leaves the values untouched and the annotation contradicting the width.
+    /// Byte 189 is the `LogicalType` union variant on `duration`, a `FIXED_LEN_BYTE_ARRAY(12)`
+    /// column the file annotates `INTERVAL` through its converted type beside the union's
+    /// `UNKNOWN` (variant 11). Relabelling the union `FLOAT16` (variant 15), which takes
+    /// precedence over the converted type, leaves the values untouched and the annotation
+    /// contradicting the width.
     ///
     /// The offset is a property of the checked-in bytes, so regenerating the fixture moves
     /// it. The test then fails and reports the bytes it did produce, which is what a new
@@ -223,7 +225,7 @@ class Float16LogicalTypeTest {
     /// field-id delta from zero — so `0x6C` is `DATE` (6) and `0xEC` `UUID` (14). `DATE` cannot
     /// be read from a `FIXED_LEN_BYTE_ARRAY` at all; `UUID` can, but only at sixteen bytes.
     /// `TIMESTAMP` (8) is left out: twelve bytes are one of its carriers. `TIME` (7) is left out
-    /// because its member struct has required fields, which the empty `INTERVAL` struct being
+    /// because its member struct has required fields, which the empty `UNKNOWN` struct being
     /// relabelled does not carry, so the footer fails to parse before the annotation is weighed.
     static Stream<Arguments> contradictedAnnotations() {
         return Stream.of(Arguments.of(0x6C), Arguments.of(0xEC));

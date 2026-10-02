@@ -36,6 +36,20 @@ class LogicalTypeReaderTest {
         assertThat(read(writer)).isNull();
     }
 
+    /// `parquet.thrift` reserves field 9 for `INTERVAL` and defines no member there, so the
+    /// reader knows nothing a writer emitting it could mean. It is an unrecognized member like any
+    /// other; a column that also carries the `INTERVAL` converted type reads as `INTERVAL` through
+    /// that.
+    @Test
+    void theReservedIntervalFieldIsAnUnknownMember() throws Exception {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(9, FieldType.STRUCT);
+        writer.writeFieldStop(); // empty member struct
+        writer.writeFieldStop(); // union STOP
+
+        assertThat(read(writer)).isNull();
+    }
+
     @Test
     void unknownParameterizedUnionMemberSkippedCleanly() throws Exception {
         ThriftCompactWriter writer = new ThriftCompactWriter();

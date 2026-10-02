@@ -139,10 +139,8 @@ enum ThriftStruct {
             "DATE",
             "TIME",
             "TIMESTAMP",
-            // parquet.thrift reserves id 9 rather than defining it, but
-            // LogicalTypeReader reads it, so a failure over it is on a field
-            // this reader does recognise.
-            "INTERVAL",
+            // Reserved for INTERVAL, never defined.
+            null,
             "INTEGER",
             "UNKNOWN",
             "JSON",
