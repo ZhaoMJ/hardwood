@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
 
 /// Shared dispatch guards for the TIMESTAMP accessor pair (#568).
@@ -26,26 +28,31 @@ public final class TimestampAccessorKind {
 
     /// Verify that a leaf is the right TIMESTAMP kind for the accessor being called, for
     /// a caller holding the leaf's schema node. A group node is not a timestamp leaf and
-    /// passes through, as a non-TIMESTAMP annotation does.
+    /// passes through, as a column that is no timestamp does.
     static void require(SchemaNode schema, boolean wantUtcAdjusted) {
         if (schema instanceof SchemaNode.PrimitiveNode primitive) {
-            require(schema.name(), primitive.logicalType(), wantUtcAdjusted);
+            require(schema.name(), primitive.type(), primitive.logicalType(), wantUtcAdjusted);
         }
     }
 
     /// Verify that a column is the kind of TIMESTAMP the accessor being called reads.
     ///
-    /// A `null` annotation is a legacy INT96 column, which carries no `isAdjustedToUTC`
-    /// field and is conventionally UTC-adjusted. A non-TIMESTAMP annotation passes through
-    /// without action: the caller's subsequent typed read fails with its own type-mismatch
-    /// exception.
+    /// A legacy `INT96` column carries no `isAdjustedToUTC` field and is conventionally
+    /// UTC-adjusted. A column that is neither it nor a `TIMESTAMP` passes through without
+    /// action: the caller's subsequent typed read fails with its own type-mismatch exception.
     ///
     /// @throws IllegalStateException if the column is the other kind
-    static void require(String columnName, LogicalType lt, boolean wantUtcAdjusted) {
-        if (lt != null && !(lt instanceof LogicalType.TimestampType)) {
+    static void require(String columnName, PhysicalType type, LogicalType lt, boolean wantUtcAdjusted) {
+        boolean utcAdjusted;
+        if (lt instanceof LogicalType.TimestampType timestamp) {
+            utcAdjusted = timestamp.isAdjustedToUTC();
+        }
+        else if (LogicalTypeConverter.isLegacyInt96Timestamp(type, lt)) {
+            utcAdjusted = true;
+        }
+        else {
             return;
         }
-        boolean utcAdjusted = lt == null || ((LogicalType.TimestampType) lt).isAdjustedToUTC();
         if (utcAdjusted != wantUtcAdjusted) {
             throw new IllegalStateException(
                     "Column '" + columnName + "' is " + describe(lt, utcAdjusted));

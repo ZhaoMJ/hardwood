@@ -500,6 +500,10 @@ public class PqRowApiTest {
             // No annotation to cast: the dereference below the cast is what throws.
             assertFailsWithFileNamed(() -> rowReader.getDecimal("big_int"), NullPointerException.class);
             assertFailsWithFileNamed(() -> rowReader.getTime("medium_int"), NullPointerException.class);
+            // Only an unannotated INT96 is the legacy timestamp; an unannotated INT64 is no
+            // timestamp of either kind, so neither accessor takes it for one.
+            assertFailsWithFileNamed(() -> rowReader.getTimestamp("big_int"), NullPointerException.class);
+            assertFailsWithFileNamed(() -> rowReader.getLocalTimestamp("big_int"), NullPointerException.class);
             // The wrong annotation: the cast to the expected one throws.
             assertFailsWithFileNamed(() -> rowReader.getDecimal("birth_date"), ClassCastException.class);
             assertFailsWithFileNamed(() -> rowReader.getTime("balance"), ClassCastException.class);

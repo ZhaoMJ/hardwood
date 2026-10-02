@@ -1039,7 +1039,7 @@ public class FilterPredicateResolver {
     /// Whether the column is the legacy `INT96` timestamp, which `getTimestamp` reads as an
     /// [Instant]. An `INT96` carrying an annotation is read as that annotation instead.
     private static boolean isLegacyInt96(ColumnSchema columnSchema) {
-        return columnSchema.type() == PhysicalType.INT96 && columnSchema.logicalType() == null;
+        return LogicalTypeConverter.isLegacyInt96Timestamp(columnSchema.type(), columnSchema.logicalType());
     }
 
     /// An [Instant] literal on an `INT96` column, measured in nanoseconds since Julian day 0

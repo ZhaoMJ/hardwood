@@ -32,6 +32,13 @@ import dev.hardwood.row.PqInterval;
 /// Converts physical values to their logical type representations.
 public final class LogicalTypeConverter {
 
+    /// Whether a column is the legacy `INT96` timestamp: an `INT96` with no annotation, whose
+    /// twelve bytes are nanoseconds of the day and a Julian day. Every reader of such a column
+    /// asks here.
+    public static boolean isLegacyInt96Timestamp(PhysicalType type, LogicalType logicalType) {
+        return type == PhysicalType.INT96 && logicalType == null;
+    }
+
     /// Julian day number of the Unix epoch (1970-01-01).
     public static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
 

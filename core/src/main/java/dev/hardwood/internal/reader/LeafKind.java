@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
@@ -57,8 +58,11 @@ enum LeafKind {
                     || logicalType instanceof LogicalType.JsonType)) {
             return STRING;
         }
+        if (LogicalTypeConverter.isLegacyInt96Timestamp(type, logicalType)) {
+            return INT96_TIMESTAMP;
+        }
         if (logicalType == null) {
-            return type == PhysicalType.INT96 ? INT96_TIMESTAMP : RAW;
+            return RAW;
         }
         return CONVERT;
     }

@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
@@ -239,7 +240,7 @@ final class PqListImpl implements PqList {
         TimestampAccessorKind.require(elementSchema, true);
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
-        if (LeafDecoder.isInt96Timestamp(leaf)) {
+        if (LogicalTypeConverter.isLegacyInt96Timestamp(leaf.type(), leaf.logicalType())) {
             return new LeafList<>(pos -> LeafDecoder.int96TimestampAt(batch.valueArrays[projCol], pos));
         }
         PhysicalType type = leaf.type();

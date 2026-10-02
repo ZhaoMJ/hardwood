@@ -687,7 +687,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         }
         ColumnSchema col = columnSchemas[columnIndex];
         try {
-            TimestampAccessorKind.require(col.name(), col.logicalType(), true);
+            TimestampAccessorKind.require(col.name(), col.type(), col.logicalType(), true);
             return LeafDecoder.timestampAt(flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
         }
         catch (RuntimeException e) {
@@ -707,7 +707,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         }
         ColumnSchema col = columnSchemas[columnIndex];
         try {
-            TimestampAccessorKind.require(col.name(), col.logicalType(), false);
+            TimestampAccessorKind.require(col.name(), col.type(), col.logicalType(), false);
             return LeafDecoder.localTimestampAt(
                     flatValueArrays[columnIndex], rowIndex, col.type(), col.logicalType());
         }

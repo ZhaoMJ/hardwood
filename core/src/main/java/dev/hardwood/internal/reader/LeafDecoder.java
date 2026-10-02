@@ -124,16 +124,6 @@ final class LeafDecoder {
         return intervalAt(batch.valueArrays[projCol], idx);
     }
 
-    /// Whether `leaf` is the legacy `INT96` timestamp, which carries the value in a
-    /// 12-byte payload rather than an `int64` and no annotation to decode through.
-    static boolean isInt96Timestamp(SchemaNode.PrimitiveNode leaf) {
-        return isInt96Timestamp(leaf.type(), leaf.logicalType());
-    }
-
-    static boolean isInt96Timestamp(PhysicalType type, LogicalType logicalType) {
-        return logicalType == null && type == PhysicalType.INT96;
-    }
-
     // ==================== Guardless reads out of a column's value array ====================
 
     static LocalDate dateAt(Object values, int idx) {
@@ -154,7 +144,7 @@ final class LeafDecoder {
     /// The instant a UTC-adjusted `TIMESTAMP` leaf stores, or the one a legacy `INT96` leaf
     /// stores by convention, as `type` and `logicalType` say.
     static Instant timestampAt(Object values, int idx, PhysicalType type, LogicalType logicalType) {
-        if (isInt96Timestamp(type, logicalType)) {
+        if (LogicalTypeConverter.isLegacyInt96Timestamp(type, logicalType)) {
             return int96TimestampAt(values, idx);
         }
         return timestampAt(values, idx, type, ((LogicalType.TimestampType) logicalType).unit());
