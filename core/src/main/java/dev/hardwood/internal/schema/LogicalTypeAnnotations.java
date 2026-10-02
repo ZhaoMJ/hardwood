@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.schema;
 
-import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -35,13 +34,15 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
 
     /// The annotations written for a primitive column of `physicalType` carrying `logicalType`.
     ///
-    /// The physical type decides one case: a `TIMESTAMP` over a `FIXED_LEN_BYTE_ARRAY(12)` is
-    /// union-only, since its legacy annotations annotate an `INT64` alone. Every other annotation is
-    /// written as it is for any physical type.
+    /// A legacy annotation is written only over a physical type [AnnotationPairings#checkConverted]
+    /// defines it on, which leaves a `TIMESTAMP` over a `FIXED_LEN_BYTE_ARRAY(12)` union-only.
     public static LogicalTypeAnnotations of(PhysicalType physicalType, LogicalType logicalType) {
-        return Flba12Timestamps.isCarriedBy(physicalType, logicalType)
-                ? unionOnly(logicalType)
-                : of(logicalType);
+        LogicalTypeAnnotations annotations = of(logicalType);
+        if (annotations.convertedType() != null
+                && AnnotationPairings.checkConverted(physicalType, annotations.convertedType()) instanceof Pairing.Illegal) {
+            return unionOnly(logicalType);
+        }
+        return annotations;
     }
 
     /// The annotations written for a logical type, whatever physical type carries it.

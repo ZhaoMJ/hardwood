@@ -98,7 +98,10 @@ public final class LogicalTypeConverter {
         };
     }
 
-    private static String readsFrom(String annotation, List<PhysicalType> allowed, PhysicalType actual) {
+    /// The fault of an annotation, named `annotation`, over a physical type it is not read from.
+    /// `LeafAnnotation` words a legacy converted type's fault with it too, so a converted type
+    /// and a logical type refused alike read alike.
+    public static String readsFrom(String annotation, List<PhysicalType> allowed, PhysicalType actual) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < allowed.size(); i++) {
             sb.append(i == 0 ? "" : i == allowed.size() - 1 ? " or " : ", ").append(allowed.get(i));

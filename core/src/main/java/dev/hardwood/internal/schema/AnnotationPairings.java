@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
@@ -148,6 +149,27 @@ public final class AnnotationPairings {
             case LogicalType.ListType ignored -> new Illegal(new GroupAnnotation());
             case LogicalType.MapType ignored -> new Illegal(new GroupAnnotation());
             case LogicalType.VariantType ignored -> new Illegal(new GroupAnnotation());
+        };
+    }
+
+    /// Whether the format defines the legacy `converted_type` over a column of this physical type,
+    /// beyond what [#check] answers for the logical type it stands for.
+    ///
+    /// Every converted type is defined over the physical types of its logical counterpart but two:
+    /// `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` "must annotate an int64", while the `TIMESTAMP`
+    /// they stand for is also carried by a `FIXED_LEN_BYTE_ARRAY(12)`. The reader drops such a
+    /// legacy annotation standing alone on anything else, and the writer writes a `TIMESTAMP` over
+    /// a `FIXED_LEN_BYTE_ARRAY(12)` without one.
+    ///
+    /// @param type the column's physical type
+    /// @param converted the column's converted type
+    public static Pairing checkConverted(PhysicalType type, ConvertedType converted) {
+        return switch (converted) {
+            // "Like the logical type counterpart, it must annotate an int64."
+            case TIMESTAMP_MILLIS, TIMESTAMP_MICROS -> only(type, PhysicalType.INT64, INT64_ONLY);
+            case UTF8, MAP, MAP_KEY_VALUE, LIST, ENUM, DECIMAL, DATE, TIME_MILLIS, TIME_MICROS,
+                 UINT_8, UINT_16, UINT_32, UINT_64, INT_8, INT_16, INT_32, INT_64, JSON, BSON,
+                 INTERVAL -> LEGAL;
         };
     }
 

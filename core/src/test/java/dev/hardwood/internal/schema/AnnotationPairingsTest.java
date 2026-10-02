@@ -16,6 +16,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
@@ -198,6 +199,21 @@ class AnnotationPairingsTest {
 
     private static LogicalType timestamp() {
         return LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
+    }
+
+    /// The legacy `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` annotate an `INT64` alone, although
+    /// the `TIMESTAMP` they stand for is also carried by a `FIXED_LEN_BYTE_ARRAY(12)`; every other
+    /// converted type adds nothing to its logical counterpart's pairing.
+    @Test
+    void theLegacyTimestampsAnnotateAnInt64Alone() {
+        assertThat(AnnotationPairings.checkConverted(PhysicalType.INT64, ConvertedType.TIMESTAMP_MILLIS))
+                .isInstanceOf(Pairing.Legal.class);
+        assertThat(AnnotationPairings.checkConverted(PhysicalType.FIXED_LEN_BYTE_ARRAY, ConvertedType.TIMESTAMP_MICROS))
+                .isEqualTo(new Pairing.Illegal(new Pairing.Fault.WrongPhysicalType(List.of(PhysicalType.INT64))));
+        assertThat(AnnotationPairings.checkConverted(PhysicalType.INT32, ConvertedType.TIMESTAMP_MILLIS))
+                .isEqualTo(new Pairing.Illegal(new Pairing.Fault.WrongPhysicalType(List.of(PhysicalType.INT64))));
+        assertThat(AnnotationPairings.checkConverted(PhysicalType.INT32, ConvertedType.TIME_MILLIS))
+                .isInstanceOf(Pairing.Legal.class);
     }
 
     /// The digits a `DECIMAL` carrier holds, as [AnnotationPairings#maxDecimalPrecision] counts
