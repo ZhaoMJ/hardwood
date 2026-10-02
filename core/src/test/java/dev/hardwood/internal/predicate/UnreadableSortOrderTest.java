@@ -334,9 +334,9 @@ class UnreadableSortOrderTest {
             assertThat(values).containsExactly(littleEndian(300));
         }
         assertThat(warnings.messages()).containsExactly(
-                "Ignoring 1 logical type annotation(s) the column's physical type cannot carry; those "
-                        + "columns are read as their physical type: ts (TIMESTAMP over a FIXED_LEN_BYTE_ARRAY "
-                        + "is 12 bytes, but the column declares 16)",
+                "Ignoring 1 annotation(s) their field cannot carry; each such field is read as though "
+                        + "unannotated: ts (TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column "
+                        + "declares 16)",
                 "[dropped-timestamp.parquet: column 'ts'] " + UNREADABLE_BOUNDS_WARNING);
     }
 

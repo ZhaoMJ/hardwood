@@ -95,12 +95,21 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
     /// a file may carry only the legacy `LIST` / `MAP`. Either way both are written back out.
     ///
     /// The deprecated `MAP_KEY_VALUE` has no union member and is passed through unchanged.
+    ///
+    /// @throws IllegalArgumentException if either annotation is one [AnnotationPairings] does not
+    ///         define over a group, which the reader drops and the writer never writes
     public static LogicalTypeAnnotations ofGroup(ConvertedType convertedType, LogicalType logicalType) {
         if (logicalType != null) {
+            if (!AnnotationPairings.annotatesGroup(logicalType)) {
+                throw new IllegalArgumentException(logicalType + " annotates a primitive, not a group");
+            }
             return of(logicalType);
         }
         if (convertedType == null) {
             return NONE;
+        }
+        if (!AnnotationPairings.annotatesGroup(convertedType)) {
+            throw new IllegalArgumentException(convertedType + " annotates a primitive, not a group");
         }
         return switch (convertedType) {
             case LIST -> both(LogicalType.list(), ConvertedType.LIST);

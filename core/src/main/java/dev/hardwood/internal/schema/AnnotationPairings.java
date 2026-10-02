@@ -265,6 +265,70 @@ public final class AnnotationPairings {
         };
     }
 
+    /// Whether the format defines `annotation` over a group: `LIST` and `MAP` annotate the
+    /// outer group of their structure and `VARIANT` "must annotate a group"; every other
+    /// annotation is defined over a primitive alone. The reader drops any other annotation off
+    /// a group, as it drops one off a primitive that cannot carry it.
+    public static boolean annotatesGroup(LogicalType annotation) {
+        return switch (annotation) {
+            case LogicalType.ListType ignored -> true;
+            case LogicalType.MapType ignored -> true;
+            case LogicalType.VariantType ignored -> true;
+            case LogicalType.StringType ignored -> false;
+            case LogicalType.EnumType ignored -> false;
+            case LogicalType.JsonType ignored -> false;
+            case LogicalType.BsonType ignored -> false;
+            case LogicalType.UuidType ignored -> false;
+            case LogicalType.DateType ignored -> false;
+            case LogicalType.TimeType ignored -> false;
+            case LogicalType.TimestampType ignored -> false;
+            case LogicalType.IntType ignored -> false;
+            case LogicalType.DecimalType ignored -> false;
+            case LogicalType.Float16Type ignored -> false;
+            case LogicalType.IntervalType ignored -> false;
+            case LogicalType.NullType ignored -> false;
+            case LogicalType.GeometryType ignored -> false;
+            case LogicalType.GeographyType ignored -> false;
+        };
+    }
+
+    /// Whether the format defines the legacy `converted` over a group: `LIST` and `MAP` on the
+    /// outer group, and `MAP_KEY_VALUE` on the repeated group inside a legacy `MAP`.
+    public static boolean annotatesGroup(ConvertedType converted) {
+        return switch (converted) {
+            case LIST, MAP, MAP_KEY_VALUE -> true;
+            case UTF8, ENUM, DECIMAL, DATE, TIME_MILLIS, TIME_MICROS, TIMESTAMP_MILLIS, TIMESTAMP_MICROS,
+                 UINT_8, UINT_16, UINT_32, UINT_64, INT_8, INT_16, INT_32, INT_64, JSON, BSON,
+                 INTERVAL -> false;
+        };
+    }
+
+    /// Whether a group's legacy `converted` states the structure its `annotation` does, the
+    /// one a writer writes beside it. Where they differ, the annotation decides, as it does on a
+    /// primitive, and the converted type is dropped.
+    public static boolean convertedAgrees(LogicalType annotation, ConvertedType converted) {
+        return annotation instanceof LogicalType.ListType && converted == ConvertedType.LIST
+                || annotation instanceof LogicalType.MapType && converted == ConvertedType.MAP;
+    }
+
+    /// A group's annotation as the reader keeps it: `annotation` where [#annotatesGroup] holds,
+    /// `null` otherwise. `FileSchema` and `BareRepeatedGroups` both read a group through this and
+    /// [#readableGroupConvertedType], so they cannot disagree about which structure it is.
+    public static LogicalType readableGroupAnnotation(LogicalType annotation) {
+        return annotation != null && annotatesGroup(annotation) ? annotation : null;
+    }
+
+    /// A group's converted type as the reader keeps it: `converted` where it annotates a group
+    /// and, beside a readable annotation, names the same structure; `null` otherwise.
+    ///
+    /// @param readableAnnotation the group's annotation as [#readableGroupAnnotation] keeps it
+    public static ConvertedType readableGroupConvertedType(LogicalType readableAnnotation, ConvertedType converted) {
+        if (converted == null || !annotatesGroup(converted)) {
+            return null;
+        }
+        return readableAnnotation == null || convertedAgrees(readableAnnotation, converted) ? converted : null;
+    }
+
     private static Pairing byteArray(PhysicalType type) {
         return only(type, PhysicalType.BYTE_ARRAY, BYTE_ARRAY_ONLY);
     }

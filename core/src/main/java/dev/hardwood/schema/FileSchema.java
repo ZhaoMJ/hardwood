@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
@@ -197,8 +198,8 @@ public class FileSchema {
         List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex, dropped);
         if (!dropped.isEmpty()) {
             LOG.log(System.Logger.Level.WARNING,
-                    "Ignoring {0} logical type annotation(s) the column''s physical type"
-                    + " cannot carry; those columns are read as their physical type: {1}",
+                    "Ignoring {0} annotation(s) their field cannot carry; each such field is read"
+                    + " as though unannotated: {1}",
                     dropped.size(), String.join("; ", dropped));
         }
 
@@ -283,11 +284,12 @@ public class FileSchema {
                         columnIndex,
                         dropped);
 
+                LogicalType groupAnnotation = readableGroupAnnotation(element, currentPath, dropped);
                 SchemaNode.GroupNode groupNode = new SchemaNode.GroupNode(
                         element.name(),
                         repType,
-                        element.convertedType(),
-                        effectiveGroupLogicalType(element, groupChildren),
+                        readableGroupConvertedType(element, groupAnnotation, currentPath, dropped),
+                        effectiveGroupLogicalType(groupAnnotation, groupChildren),
                         groupChildren,
                         defLevel,
                         repLevel);
@@ -357,6 +359,32 @@ public class FileSchema {
         }
     }
 
+    /// The group's annotation, or `null` where it is one only a primitive carries, which the
+    /// reader drops as it drops an annotation a primitive's physical type cannot carry.
+    private static LogicalType readableGroupAnnotation(SchemaElement element, List<String> path,
+                                                       List<String> dropped) {
+        LogicalType annotation = element.logicalType();
+        if (AnnotationPairings.readableGroupAnnotation(annotation) == annotation) {
+            return annotation;
+        }
+        dropped.add(String.join(".", path) + " (" + annotation + " annotates a primitive, but the field is a group)");
+        return null;
+    }
+
+    /// The group's legacy converted type, or `null` where it is one only a primitive carries, or
+    /// names another structure than the group's readable `annotation`, which decides.
+    private static ConvertedType readableGroupConvertedType(SchemaElement element, LogicalType annotation,
+                                                            List<String> path, List<String> dropped) {
+        ConvertedType converted = element.convertedType();
+        if (AnnotationPairings.readableGroupConvertedType(annotation, converted) == converted) {
+            return converted;
+        }
+        dropped.add(String.join(".", path) + " (" + converted + (AnnotationPairings.annotatesGroup(converted)
+                ? " contradicts the group's " + annotation + ")"
+                : " annotates a primitive, but the field is a group)"));
+        return null;
+    }
+
     /// Resolve the effective logical type of a group element. The modern
     /// `logicalType()` wins when present. Otherwise, recognise the legacy MAP
     /// encoding in which only the inner repeated `key_value` group carries the
@@ -366,9 +394,9 @@ public class FileSchema {
     /// identically to a MAP-annotated group.
     ///
     /// @see <a href="https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps">Parquet LogicalTypes – Maps backward-compatibility rules</a>
-    private static LogicalType effectiveGroupLogicalType(SchemaElement element, List<SchemaNode> children) {
-        if (element.logicalType() != null) {
-            return element.logicalType();
+    private static LogicalType effectiveGroupLogicalType(LogicalType annotation, List<SchemaNode> children) {
+        if (annotation != null) {
+            return annotation;
         }
         if (hasMapKeyValueChild(children)) {
             return LogicalType.map();

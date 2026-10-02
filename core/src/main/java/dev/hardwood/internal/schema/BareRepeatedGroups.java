@@ -157,11 +157,12 @@ public final class BareRepeatedGroups {
 
     /// Whether the group at `index` reads as a `LIST` or `MAP`, as [FileSchema#fromSchemaElements]
     /// decides it: by its own annotation, or, carrying no logical type, by a sole repeated
-    /// `MAP_KEY_VALUE` child.
+    /// `MAP_KEY_VALUE` child. Both read a group's annotations as [AnnotationPairings] keeps them,
+    /// so an annotation only a primitive carries is no annotation here either.
     private static boolean isListOrMap(List<SchemaElement> elements, int index) {
         SchemaElement group = elements.get(index);
-        ConvertedType converted = group.convertedType();
-        LogicalType logical = group.logicalType();
+        LogicalType logical = AnnotationPairings.readableGroupAnnotation(group.logicalType());
+        ConvertedType converted = AnnotationPairings.readableGroupConvertedType(logical, group.convertedType());
         if (converted == ConvertedType.LIST || converted == ConvertedType.MAP
                 || logical instanceof LogicalType.ListType || logical instanceof LogicalType.MapType) {
             return true;
@@ -172,6 +173,8 @@ public final class BareRepeatedGroups {
         SchemaElement child = elements.get(index + 1);
         return !child.isPrimitive()
                 && child.repetitionType() == RepetitionType.REPEATED
-                && child.convertedType() == ConvertedType.MAP_KEY_VALUE;
+                && AnnotationPairings.readableGroupConvertedType(
+                        AnnotationPairings.readableGroupAnnotation(child.logicalType()), child.convertedType())
+                        == ConvertedType.MAP_KEY_VALUE;
     }
 }
