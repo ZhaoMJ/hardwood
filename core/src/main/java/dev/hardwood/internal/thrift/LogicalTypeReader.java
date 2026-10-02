@@ -188,7 +188,7 @@ public class LogicalTypeReader {
 
         ThriftCompactReader.requireFields(ThriftStruct.TIME_TYPE, seen, BOTH_FIELDS);
 
-        return LogicalType.time(isAdjustedToUTC, unit);
+        return unit == null ? null : LogicalType.time(isAdjustedToUTC, unit);
     }
 
     private static LogicalType.TimestampType readTimestampType(ThriftCompactReader reader, int header) {
@@ -232,7 +232,7 @@ public class LogicalTypeReader {
 
         ThriftCompactReader.requireFields(ThriftStruct.TIMESTAMP_TYPE, seen, BOTH_FIELDS);
 
-        return LogicalType.timestamp(isAdjustedToUTC, unit);
+        return unit == null ? null : LogicalType.timestamp(isAdjustedToUTC, unit);
     }
 
     private static LogicalType.IntType readIntType(ThriftCompactReader reader, int header) {
@@ -323,14 +323,26 @@ public class LogicalTypeReader {
         return LogicalType.variant(specVersion);
     }
 
+    /// The unit a `TIME` or `TIMESTAMP` counts, or `null` for one this version does not know.
+    /// parquet-format lists `MILLIS`, `MICROS` and `NANOS` as "subject to potential expansion" and
+    /// requires a reader to handle an unknown one "as unsupported features (rather than as errors
+    /// in the data files)", so the annotation carrying it is read as none, as an unrecognized
+    /// union member is.
     private static TimeUnit readTimeUnit(ThriftCompactReader reader) {
         int fieldId = reader.readUnionVariant(ThriftStruct.TIME_UNIT);
         return switch (fieldId) {
             case 1 -> TimeUnit.MILLIS;
             case 2 -> TimeUnit.MICROS;
             case 3 -> TimeUnit.NANOS;
-            default -> throw new ParquetReadException(
-                    ThriftStruct.TIME_UNIT.describe(fieldId) + " is not a time unit");
+            default -> {
+                LOG.log(System.Logger.Level.WARNING,
+                        "Ignoring a time annotation in unrecognized TimeUnit field {0};"
+                        + " the column will be read as its physical type."
+                        + " The file may have been written against a newer"
+                        + " version of the format.",
+                        fieldId);
+                yield null;
+            }
         };
     }
 

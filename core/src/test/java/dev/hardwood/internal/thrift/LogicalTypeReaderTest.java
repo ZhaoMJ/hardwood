@@ -99,6 +99,21 @@ class LogicalTypeReaderTest {
         }
     }
 
+    /// "Upon reading, unknown `unit`-s must be handled as unsupported features (rather than as
+    /// errors in the data files)": a `TIME` or `TIMESTAMP` in a unit this version does not know
+    /// is an annotation it does not recognize, and decodes to none, as an unknown member does.
+    @Test
+    void anUnknownTimeUnitDecodesToNull() throws Exception {
+        assertThat(read(timeType(7, 4))).isNull();
+        assertThat(read(timeType(8, 4))).isNull();
+    }
+
+    @Test
+    void everyKnownTimeUnitDecodes() throws Exception {
+        assertThat(read(timeType(7, 3))).isEqualTo(LogicalType.time(true, LogicalType.TimeUnit.NANOS));
+        assertThat(read(timeType(8, 2))).isEqualTo(LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
+    }
+
     @Test
     void invalidVariantSpecVersionIsAReadFailure() throws Exception {
         assertThatThrownBy(() -> read(variantType(0)))
@@ -124,6 +139,25 @@ class LogicalTypeReaderTest {
         writer.writeFieldStop();
         writer.popFieldIdContext(savedMember);
         writer.writeFieldStop();
+        return writer;
+    }
+
+    /// The `TIME` (field id 7) or `TIMESTAMP` (field id 8) union member, UTC-adjusted, whose
+    /// `TimeUnit` union sets the member `unitFieldId` to an empty struct.
+    private static ThriftCompactWriter timeType(int memberFieldId, int unitFieldId) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(memberFieldId, FieldType.STRUCT);
+        short savedMember = writer.pushFieldIdContext();
+        writer.writeBool(1, true);
+        writer.writeFieldBegin(2, FieldType.STRUCT);
+        short savedUnit = writer.pushFieldIdContext();
+        writer.writeFieldBegin(unitFieldId, FieldType.STRUCT);
+        writer.writeFieldStop(); // empty unit struct
+        writer.writeFieldStop(); // TimeUnit union STOP
+        writer.popFieldIdContext(savedUnit);
+        writer.writeFieldStop(); // member struct STOP
+        writer.popFieldIdContext(savedMember);
+        writer.writeFieldStop(); // union STOP
         return writer;
     }
 
