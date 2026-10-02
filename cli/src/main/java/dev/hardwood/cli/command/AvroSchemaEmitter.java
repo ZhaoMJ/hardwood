@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 
 import dev.hardwood.cli.internal.JsonStrings;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -167,10 +168,10 @@ final class AvroSchemaEmitter {
         switch (prim.type()) {
             case FIXED_LEN_BYTE_ARRAY -> {
                 if (prim.logicalType() instanceof LogicalType.IntervalType) {
-                    sb.append(names.canonicalFixed("interval", 12));
+                    sb.append(names.canonicalFixed("interval", FixedWidths.INTERVAL));
                 }
                 else if (prim.logicalType() instanceof LogicalType.Float16Type) {
-                    sb.append(names.canonicalFixed("float16", 2));
+                    sb.append(names.canonicalFixed("float16", FixedWidths.FLOAT16));
                 }
                 else {
                     sb.append(names.fixedReference(prim));

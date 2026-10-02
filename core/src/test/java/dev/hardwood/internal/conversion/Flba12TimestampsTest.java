@@ -35,11 +35,11 @@ class Flba12TimestampsTest {
     /// Little-endian two's complement encoding, written independently of the
     /// production encoder so the two can disagree.
     private static byte[] le(BigInteger value) {
-        byte[] bytes = new byte[Flba12Timestamps.WIDTH];
+        byte[] bytes = new byte[FixedWidths.FLBA12_TIMESTAMP];
         BigInteger unsigned = value.signum() < 0
                 ? value.add(BigInteger.ONE.shiftLeft(96))
                 : value;
-        for (int i = 0; i < Flba12Timestamps.WIDTH; i++) {
+        for (int i = 0; i < FixedWidths.FLBA12_TIMESTAMP; i++) {
             bytes[i] = unsigned.shiftRight(8 * i).byteValue();
         }
         return bytes;
@@ -175,9 +175,9 @@ class Flba12TimestampsTest {
 
     @Test
     void decodesAtAnOffsetWithinAPackedBuffer() {
-        byte[] packed = new byte[3 * Flba12Timestamps.WIDTH];
-        System.arraycopy(le(-1), 0, packed, Flba12Timestamps.WIDTH, Flba12Timestamps.WIDTH);
-        assertThat(Flba12Timestamps.toInstant(packed, Flba12Timestamps.WIDTH, Flba12Timestamps.WIDTH, NANOS))
+        byte[] packed = new byte[3 * FixedWidths.FLBA12_TIMESTAMP];
+        System.arraycopy(le(-1), 0, packed, FixedWidths.FLBA12_TIMESTAMP, FixedWidths.FLBA12_TIMESTAMP);
+        assertThat(Flba12Timestamps.toInstant(packed, FixedWidths.FLBA12_TIMESTAMP, FixedWidths.FLBA12_TIMESTAMP, NANOS))
                 .isEqualTo(Instant.parse("1969-12-31T23:59:59.999999999Z"));
     }
 

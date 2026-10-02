@@ -15,6 +15,7 @@ import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 
 import dev.hardwood.avro.internal.AvroPlanNode.Kind;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -326,9 +327,9 @@ public final class AvroSchemaConverter {
             case LogicalType.DecimalType d -> convertDecimalType(physicalType, d, prim);
             case LogicalType.IntType i -> convertIntType(i, prim);
             case LogicalType.IntervalType iv -> AvroPlanNode.leaf(
-                    Schema.createFixed("interval", null, null, 12), Kind.FIXED, prim);
+                    Schema.createFixed("interval", null, null, FixedWidths.INTERVAL), Kind.FIXED, prim);
             case LogicalType.Float16Type f -> AvroPlanNode.leaf(
-                    Schema.createFixed("float16", null, null, 2), Kind.FIXED, prim);
+                    Schema.createFixed("float16", null, null, FixedWidths.FLOAT16), Kind.FIXED, prim);
             case LogicalType.ListType l -> convertPhysicalType(physicalType, prim);
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.VariantType v -> throw new IllegalStateException(
@@ -409,8 +410,8 @@ public final class AvroSchemaConverter {
             case BYTE_ARRAY -> binary(prim);
             case FIXED_LEN_BYTE_ARRAY -> AvroPlanNode.leaf(
                     fixedSchema(prim, fixedByteLength(prim)), Kind.FIXED, prim);
-            // INT96 has a fixed 12-byte width that the schema does not carry a length for.
-            case INT96 -> AvroPlanNode.leaf(fixedSchema(prim, 12), Kind.FIXED, prim);
+            // INT96 has a fixed width that the schema does not carry a length for.
+            case INT96 -> AvroPlanNode.leaf(fixedSchema(prim, FixedWidths.INT96), Kind.FIXED, prim);
         };
     }
 

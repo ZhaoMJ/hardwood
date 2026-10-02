@@ -41,13 +41,6 @@ import dev.hardwood.writer.PrecisionLossPolicy;
 /// Each method takes the field's name so the message names the field the caller set.
 public final class PhysicalValueConverter {
 
-    /// Bytes of a `FIXED_LEN_BYTE_ARRAY` holding a `UUID`.
-    private static final int UUID_BYTES = 16;
-
-    /// Bytes of a `FIXED_LEN_BYTE_ARRAY` holding an `INTERVAL`: three little-endian unsigned
-    /// 4-byte fields (months, days, millis).
-    private static final int INTERVAL_BYTES = 12;
-
     private PhysicalValueConverter() {
     }
 
@@ -246,7 +239,7 @@ public final class PhysicalValueConverter {
 
     /// The 16 big-endian bytes of a `UUID`, most significant half first.
     public static byte[] uuidToBytes(UUID value) {
-        byte[] bytes = new byte[UUID_BYTES];
+        byte[] bytes = new byte[FixedWidths.UUID];
         writeLongBigEndian(bytes, 0, value.getMostSignificantBits());
         writeLongBigEndian(bytes, Long.BYTES, value.getLeastSignificantBits());
         return bytes;
@@ -261,7 +254,7 @@ public final class PhysicalValueConverter {
     /// The 12 bytes of an `INTERVAL`: months, days and millis as little-endian unsigned
     /// 4-byte fields, the layout [LogicalTypeConverter#bytesToInterval] reads back.
     public static byte[] intervalToBytes(String field, PqInterval value) {
-        byte[] bytes = new byte[INTERVAL_BYTES];
+        byte[] bytes = new byte[FixedWidths.INTERVAL];
         writeUnsignedIntLittleEndian(field, bytes, 0, value.months(), "months");
         writeUnsignedIntLittleEndian(field, bytes, Integer.BYTES, value.days(), "days");
         writeUnsignedIntLittleEndian(field, bytes, 2 * Integer.BYTES, value.milliseconds(), "millis");

@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.schema;
 
-import dev.hardwood.internal.conversion.Flba12Timestamps;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -77,7 +77,7 @@ public class LogicalTypeValidator {
         }
         if (logicalType instanceof LogicalType.TimestampType) {
             return new IllegalArgumentException(logicalType + " annotates an INT64 or a FIXED_LEN_BYTE_ARRAY("
-                    + Flba12Timestamps.WIDTH + ") column, not " + type + " (column " + columnName + ")");
+                    + FixedWidths.FLBA12_TIMESTAMP + ") column, not " + type + " (column " + columnName + ")");
         }
         return new IllegalArgumentException(logicalType + " annotates a " + wrong.allowed().getFirst()
                 + " column, not " + type + " (column " + columnName + ")");

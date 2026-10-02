@@ -12,7 +12,7 @@ import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.conversion.FixedWidths;
 
 /// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
 /// BYTE_ARRAY), big-endian signed two's complement (for DECIMAL columns of either byte-array type),
@@ -222,8 +222,8 @@ public final class BinaryComparator {
     }
 
     private static void requireInt96(int width) {
-        if (width != LogicalTypeConverter.INT96_BYTES) {
-            throw new IllegalArgumentException("An INT96 value is " + LogicalTypeConverter.INT96_BYTES
+        if (width != FixedWidths.INT96) {
+            throw new IllegalArgumentException("An INT96 value is " + FixedWidths.INT96
                     + " bytes, not " + width);
         }
     }

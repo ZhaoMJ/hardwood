@@ -10,7 +10,7 @@ package dev.hardwood.internal.schema;
 import java.math.BigDecimal;
 import java.util.List;
 
-import dev.hardwood.internal.conversion.Flba12Timestamps;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
@@ -40,11 +40,6 @@ import static dev.hardwood.internal.schema.Pairing.Fault.WrongWidth;
 /// it (#1413); a footer carrying it decodes to an unrecognized union member and the annotation is
 /// dropped, which is what the format asks of a reader that does not recognize one.
 public final class AnnotationPairings {
-
-    /// The widths parquet-format fixes for an annotation over a `FIXED_LEN_BYTE_ARRAY`.
-    private static final int UUID_WIDTH = 16;
-    private static final int INTERVAL_WIDTH = 12;
-    private static final int FLOAT16_WIDTH = 2;
 
     private static final List<PhysicalType> BYTE_ARRAY_ONLY = List.of(PhysicalType.BYTE_ARRAY);
     private static final List<PhysicalType> FIXED_ONLY = List.of(PhysicalType.FIXED_LEN_BYTE_ARRAY);
@@ -129,13 +124,13 @@ public final class AnnotationPairings {
             case LogicalType.GeometryType ignored -> byteArray(type);
             case LogicalType.GeographyType ignored -> byteArray(type);
             // "annotates a 16-byte FIXED_LEN_BYTE_ARRAY primitive type"
-            case LogicalType.UuidType ignored -> fixedWidth(type, typeLength, UUID_WIDTH);
+            case LogicalType.UuidType ignored -> fixedWidth(type, typeLength, FixedWidths.UUID);
             // "must annotate a FIXED_LEN_BYTE_ARRAY of length 12"
             case LogicalType.IntervalType ignored ->
-                    fixedWidth(type, typeLength, INTERVAL_WIDTH);
+                    fixedWidth(type, typeLength, FixedWidths.INTERVAL);
             // "The primitive type is a 2-byte FIXED_LEN_BYTE_ARRAY."
             case LogicalType.Float16Type ignored ->
-                    fixedWidth(type, typeLength, FLOAT16_WIDTH);
+                    fixedWidth(type, typeLength, FixedWidths.FLOAT16);
             // "must annotate an int32 that stores the number of days from the Unix epoch"
             case LogicalType.DateType ignored -> only(type, PhysicalType.INT32, INT32_ONLY);
             // MILLIS "must annotate an int32"; MICROS and NANOS "must annotate an int64".
@@ -191,9 +186,9 @@ public final class AnnotationPairings {
     /// whose range the `INT64` form cannot hold.
     private static Pairing timestampPairing(PhysicalType type, Integer typeLength) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return !hasUsableWidth(typeLength) || typeLength == Flba12Timestamps.WIDTH
+            return !hasUsableWidth(typeLength) || typeLength == FixedWidths.FLBA12_TIMESTAMP
                     ? LEGAL
-                    : new Illegal(new WrongWidth(Flba12Timestamps.WIDTH));
+                    : new Illegal(new WrongWidth(FixedWidths.FLBA12_TIMESTAMP));
         }
         return only(type, PhysicalType.INT64, TIMESTAMP_TYPES);
     }

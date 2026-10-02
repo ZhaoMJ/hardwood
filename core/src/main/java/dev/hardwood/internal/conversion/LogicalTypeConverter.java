@@ -32,13 +32,6 @@ import dev.hardwood.row.PqInterval;
 /// Converts physical values to their logical type representations.
 public final class LogicalTypeConverter {
 
-    /// Bytes of the `FIXED_LEN_BYTE_ARRAY` payloads whose width the format fixes, and of
-    /// the legacy `INT96` timestamp.
-    private static final int UUID_BYTES = 16;
-    private static final int INTERVAL_BYTES = 12;
-    private static final int FLOAT16_BYTES = 2;
-    public static final int INT96_BYTES = 12;
-
     /// Julian day number of the Unix epoch (1970-01-01).
     public static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
 
@@ -292,8 +285,8 @@ public final class LogicalTypeConverter {
 
     /// The [UUID] a 16-byte `UUID` payload stands for, most significant half first.
     public static UUID bytesToUuid(byte[] bytes) {
-        if (bytes.length != UUID_BYTES) {
-            throw new ParquetReadException("UUID requires exactly " + UUID_BYTES + " bytes, got " + bytes.length);
+        if (bytes.length != FixedWidths.UUID) {
+            throw new ParquetReadException("UUID requires exactly " + FixedWidths.UUID + " bytes, got " + bytes.length);
         }
         ByteBuffer bb = ByteBuffer.wrap(bytes);
         long mostSigBits = bb.getLong();
@@ -304,8 +297,8 @@ public final class LogicalTypeConverter {
     /// The [UUID] the 16-byte `UUID` payload at `offset` stands for, for a caller
     /// holding the payload inside a larger buffer.
     public static UUID bytesToUuid(byte[] bytes, int offset, int length) {
-        if (length != UUID_BYTES) {
-            throw new ParquetReadException("UUID requires exactly " + UUID_BYTES + " bytes, got " + length);
+        if (length != FixedWidths.UUID) {
+            throw new ParquetReadException("UUID requires exactly " + FixedWidths.UUID + " bytes, got " + length);
         }
         return new UUID(longAt(bytes, offset), longAt(bytes, offset + 8));
     }
@@ -323,9 +316,9 @@ public final class LogicalTypeConverter {
     /// The [PqInterval] a 12-byte `INTERVAL` payload stands for: months, days and millis
     /// as little-endian unsigned 4-byte fields.
     public static PqInterval bytesToInterval(byte[] bytes) {
-        if (bytes.length != INTERVAL_BYTES) {
+        if (bytes.length != FixedWidths.INTERVAL) {
             throw new ParquetReadException(
-                    "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + bytes.length);
+                    "INTERVAL requires exactly " + FixedWidths.INTERVAL + " bytes, got " + bytes.length);
         }
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long months = Integer.toUnsignedLong(buffer.getInt(0));
@@ -337,9 +330,9 @@ public final class LogicalTypeConverter {
     /// The [PqInterval] the 12-byte `INTERVAL` payload at `offset` stands for, for a
     /// caller holding the payload inside a larger buffer.
     public static PqInterval bytesToInterval(byte[] bytes, int offset, int length) {
-        if (length != INTERVAL_BYTES) {
+        if (length != FixedWidths.INTERVAL) {
             throw new ParquetReadException(
-                    "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + length);
+                    "INTERVAL requires exactly " + FixedWidths.INTERVAL + " bytes, got " + length);
         }
         return new PqInterval(
                 Integer.toUnsignedLong(intAt(bytes, offset)),
@@ -364,9 +357,9 @@ public final class LogicalTypeConverter {
     /// The single-precision value the 2-byte `FLOAT16` payload at `offset` stands for, for
     /// a caller holding the payload inside a larger buffer.
     public static float bytesToFloat16(byte[] bytes, int offset, int length) {
-        if (length != FLOAT16_BYTES) {
+        if (length != FixedWidths.FLOAT16) {
             throw new ParquetReadException(
-                    "FLOAT16 requires exactly " + FLOAT16_BYTES + " bytes, got " + length);
+                    "FLOAT16 requires exactly " + FixedWidths.FLOAT16 + " bytes, got " + length);
         }
         // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
         short raw = (short) ((bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8));
@@ -376,8 +369,8 @@ public final class LogicalTypeConverter {
     /// Convert a legacy INT96 timestamp (12 bytes, little-endian: 8 bytes nanos-of-day,
     /// 4 bytes Julian day) to an [Instant]. Used by Apache Spark and Hive.
     public static Instant int96ToInstant(byte[] bytes) {
-        if (bytes.length != INT96_BYTES) {
-            throw new ParquetReadException("INT96 requires exactly " + INT96_BYTES + " bytes, got " + bytes.length);
+        if (bytes.length != FixedWidths.INT96) {
+            throw new ParquetReadException("INT96 requires exactly " + FixedWidths.INT96 + " bytes, got " + bytes.length);
         }
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long nanosOfDay = bb.getLong(0);

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.StringJoiner;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
@@ -72,11 +73,6 @@ public final class ValueFormatter {
 
     private static final int MAX_NESTED_ELEMENTS = 3;
     private static final int MAX_NESTED_DEPTH = 3;
-
-    private static final int UUID_LENGTH = 16;
-    private static final int INTERVAL_LENGTH = 12;
-    private static final int INT96_LENGTH = 12;
-    private static final int FLOAT16_LENGTH = 2;
 
     private ValueFormatter() {
     }
@@ -385,22 +381,22 @@ public final class ValueFormatter {
             return text(LogicalTypeConverter.bytesToString(bytes), style);
         }
         if (lt instanceof LogicalType.UuidType) {
-            requireLength(pn, "UUID", UUID_LENGTH, bytes);
+            requireLength(pn, "UUID", FixedWidths.UUID, bytes);
             return LogicalTypeConverter.bytesToUuid(bytes).toString();
         }
         if (lt instanceof LogicalType.DecimalType dt) {
             return LogicalTypeConverter.bytesToDecimal(bytes, dt.scale()).toPlainString();
         }
         if (lt instanceof LogicalType.IntervalType) {
-            requireLength(pn, "INTERVAL", INTERVAL_LENGTH, bytes);
+            requireLength(pn, "INTERVAL", FixedWidths.INTERVAL, bytes);
             return formatIntervalBytes(bytes);
         }
         if (lt instanceof LogicalType.TimestampType ts) {
-            requireLength(pn, "TIMESTAMP", Flba12Timestamps.WIDTH, bytes);
+            requireLength(pn, "TIMESTAMP", FixedWidths.FLBA12_TIMESTAMP, bytes);
             return Flba12Timestamps.toTemporal(bytes, 0, bytes.length, ts).toString();
         }
         if (pn.type() == PhysicalType.INT96) {
-            requireLength(pn, "INT96", INT96_LENGTH, bytes);
+            requireLength(pn, "INT96", FixedWidths.INT96, bytes);
             return LogicalTypeConverter.int96ToInstant(bytes).toString();
         }
         return BinaryValues.render(bytes, budget);
@@ -712,15 +708,15 @@ public final class ValueFormatter {
             case LogicalType.JsonType j -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
             case LogicalType.BsonType b -> Strings.sanitizeControls(LogicalTypeConverter.bytesToString(raw));
             case LogicalType.DecimalType d -> LogicalTypeConverter.bytesToDecimal(raw, d.scale()).toPlainString();
-            case LogicalType.UuidType u when raw.length == UUID_LENGTH ->
+            case LogicalType.UuidType u when raw.length == FixedWidths.UUID ->
                     LogicalTypeConverter.bytesToUuid(raw).toString();
             case LogicalType.UuidType u -> BinaryValues.toHex(raw, budget);
-            case LogicalType.IntervalType i when raw.length == INTERVAL_LENGTH -> formatIntervalBytes(raw);
+            case LogicalType.IntervalType i when raw.length == FixedWidths.INTERVAL -> formatIntervalBytes(raw);
             case LogicalType.IntervalType i -> BinaryValues.toHex(raw, budget);
-            case LogicalType.Float16Type f when raw.length == FLOAT16_LENGTH ->
+            case LogicalType.Float16Type f when raw.length == FixedWidths.FLOAT16 ->
                     Float.toString(LogicalTypeConverter.bytesToFloat16(raw));
             case LogicalType.Float16Type f -> BinaryValues.toHex(raw, budget);
-            case LogicalType.TimestampType ts when raw.length == Flba12Timestamps.WIDTH ->
+            case LogicalType.TimestampType ts when raw.length == FixedWidths.FLBA12_TIMESTAMP ->
                     formatFixedTimestamp(raw, ts, budget);
             case LogicalType.TimestampType ts -> BinaryValues.toHex(raw, budget);
             case LogicalType.GeometryType g -> BinaryValues.render(raw, budget);
@@ -745,7 +741,7 @@ public final class ValueFormatter {
     /// physical mode, and a payload that is not the 12 bytes an INT96 is, render
     /// the raw `0x` hex.
     private static String formatInt96(byte[] bytes, boolean useLogicalType, int budget) {
-        return useLogicalType && bytes.length == INT96_LENGTH
+        return useLogicalType && bytes.length == FixedWidths.INT96
                 ? LogicalTypeConverter.int96ToInstant(bytes).toString()
                 : BinaryValues.toHex(bytes, budget);
     }
@@ -844,7 +840,7 @@ public final class ValueFormatter {
             case BOOLEAN -> bytes.length == 1;
             case INT32, FLOAT -> bytes.length == Integer.BYTES;
             case INT64, DOUBLE -> bytes.length == Long.BYTES;
-            case INT96 -> bytes.length == INT96_LENGTH;
+            case INT96 -> bytes.length == FixedWidths.INT96;
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> true;
         };
     }

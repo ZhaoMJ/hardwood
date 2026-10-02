@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 
-import dev.hardwood.internal.conversion.Flba12Timestamps;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
@@ -71,12 +71,6 @@ import dev.hardwood.schema.SchemaNode;
 /// need to repeat column lookups or type checks.
 public class FilterPredicateResolver {
 
-    /// A `FLOAT16` value is two little-endian bytes of an IEEE half.
-    private static final int FLOAT16_BYTES = 2;
-
-    /// An `INTERVAL` value is three unsigned little-endian 32-bit components.
-    private static final int INTERVAL_BYTES = 12;
-
     /// The largest value one of those components holds.
     private static final long UNSIGNED_INT_MAX = 0xFFFF_FFFFL;
 
@@ -86,7 +80,7 @@ public class FilterPredicateResolver {
     private static final BigInteger INT64_MAX = BigInteger.valueOf(Long.MAX_VALUE);
 
     /// The counts a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` holds.
-    private static final CarriedLiteral.Range FIXED_TIMESTAMP_RANGE = CarriedLiteral.Range.ofBytes(Flba12Timestamps.WIDTH);
+    private static final CarriedLiteral.Range FIXED_TIMESTAMP_RANGE = CarriedLiteral.Range.ofBytes(FixedWidths.FLBA12_TIMESTAMP);
 
     private static final BigInteger NANOS_PER_MILLI = BigInteger.valueOf(1_000_000L);
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
@@ -795,7 +789,7 @@ public class FilterPredicateResolver {
     /// The twelve bytes an `INTERVAL` column stores for `value`: its months, its days and its
     /// milliseconds, each an unsigned 32-bit little-endian integer.
     private static byte[] intervalBytes(String columnName, PqInterval value) {
-        byte[] bytes = new byte[INTERVAL_BYTES];
+        byte[] bytes = new byte[FixedWidths.INTERVAL];
         ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
                 .putInt(unsignedComponent(columnName, value, value.months()))
                 .putInt(unsignedComponent(columnName, value, value.days()))
@@ -817,23 +811,23 @@ public class FilterPredicateResolver {
     /// The half two little-endian bytes of a `FLOAT16` literal encode, which the column's bounds
     /// are written in the order of.
     private static float float16ToFloat(String columnName, byte[] value) {
-        if (value.length != FLOAT16_BYTES) {
+        if (value.length != FixedWidths.FLOAT16) {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' is a FLOAT16, whose literal is "
-                            + FLOAT16_BYTES + " bytes, not " + value.length);
+                            + FixedWidths.FLOAT16 + " bytes, not " + value.length);
         }
         return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
     }
 
     /// Refuses a byte literal on an `INT96` column that is not the twelve bytes of a value.
     private static void requireInt96Width(String columnName, byte[] value) {
-        requireLiteralWidth(columnName, "an INT96", LogicalTypeConverter.INT96_BYTES, value);
+        requireLiteralWidth(columnName, "an INT96", FixedWidths.INT96, value);
     }
 
     /// Refuses a byte literal on a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` column that is not the
     /// twelve bytes of a value.
     private static void requireFixedTimestampWidth(String columnName, byte[] value) {
-        requireLiteralWidth(columnName, "a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP", Flba12Timestamps.WIDTH, value);
+        requireLiteralWidth(columnName, "a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP", FixedWidths.FLBA12_TIMESTAMP, value);
     }
 
     /// Refuses a byte literal of another width than the `width` bytes that encode a value of the
@@ -1079,7 +1073,7 @@ public class FilterPredicateResolver {
                 : dayAndRemainder[0];
         int day = Math.clamp(floorDay.longValueExact(), Integer.MIN_VALUE, Integer.MAX_VALUE);
         long nanosOfDay = nanos.subtract(BigInteger.valueOf(day).multiply(NANOS_PER_DAY)).longValueExact();
-        return ByteBuffer.allocate(LogicalTypeConverter.INT96_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        return ByteBuffer.allocate(FixedWidths.INT96).order(ByteOrder.LITTLE_ENDIAN)
                 .putLong(nanosOfDay)
                 .putInt(day)
                 .array();
@@ -1118,7 +1112,7 @@ public class FilterPredicateResolver {
     /// two's complement, least significant byte first. The count has already been measured against
     /// [#FIXED_TIMESTAMP_RANGE].
     private static byte[] fixedTimestampBytes(BigInteger count) {
-        byte[] bigEndian = toFixedLenDecimalBytes(count, Flba12Timestamps.WIDTH);
+        byte[] bigEndian = toFixedLenDecimalBytes(count, FixedWidths.FLBA12_TIMESTAMP);
         byte[] littleEndian = new byte[bigEndian.length];
         for (int i = 0; i < bigEndian.length; i++) {
             littleEndian[i] = bigEndian[bigEndian.length - 1 - i];

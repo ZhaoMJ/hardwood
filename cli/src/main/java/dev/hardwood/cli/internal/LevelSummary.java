@@ -10,6 +10,7 @@ package dev.hardwood.cli.internal;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
@@ -202,7 +203,7 @@ public record LevelSummary(
             case BOOLEAN -> (count + 7) / 8;
             case INT32, FLOAT -> count * 4;
             case INT64, DOUBLE -> count * 8;
-            case INT96 -> count * 12;
+            case INT96 -> count * FixedWidths.INT96;
             case FIXED_LEN_BYTE_ARRAY -> column.typeLength() != null ? count * column.typeLength() : -1;
             case BYTE_ARRAY -> -1;
         };

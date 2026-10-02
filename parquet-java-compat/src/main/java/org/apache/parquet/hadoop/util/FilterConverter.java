@@ -18,6 +18,7 @@ import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.filter2.predicate.Operators;
 import org.apache.parquet.io.api.Binary;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -27,9 +28,6 @@ import dev.hardwood.schema.SchemaNode;
 /// Converts parquet-java [FilterPredicate] trees to Hardwood
 /// [dev.hardwood.reader.FilterPredicate] trees.
 final class FilterConverter {
-
-    /// A `FLOAT16` value is two little-endian bytes of an IEEE half.
-    private static final int FLOAT16_BYTES = 2;
 
     private FilterConverter() {
     }
@@ -173,7 +171,7 @@ final class FilterConverter {
             BigInteger unscaled = bytes.length == 0 ? BigInteger.ZERO : new BigInteger(bytes);
             return new BigDecimal(unscaled, decimal.scale());
         }
-        if (logicalType instanceof LogicalType.Float16Type && bytes.length == FLOAT16_BYTES) {
+        if (logicalType instanceof LogicalType.Float16Type && bytes.length == FixedWidths.FLOAT16) {
             return Float.float16ToFloat((short) ((bytes[1] & 0xFF) << 8 | bytes[0] & 0xFF));
         }
         return bytes;

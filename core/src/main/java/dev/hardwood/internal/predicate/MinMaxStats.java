@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.conversion.Flba12Timestamps;
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.Statistics;
@@ -531,7 +531,7 @@ sealed interface MinMaxStats {
                 return new NoBounds(null);
             }
             if (comparison == Comparison.FIXED_TIMESTAMP
-                    && (min.length != Flba12Timestamps.WIDTH || max.length != Flba12Timestamps.WIDTH)) {
+                    && (min.length != FixedWidths.FLBA12_TIMESTAMP || max.length != FixedWidths.FLBA12_TIMESTAMP)) {
                 return new NoBounds(NOT_THE_COLUMN_WIDTH);
             }
             // -100 sorts below +100 as a two's complement number and above it as a byte

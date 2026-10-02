@@ -34,9 +34,6 @@ import dev.hardwood.metadata.PhysicalType;
 /// a count of nanoseconds of the day; see [LogicalTypeConverter#int96ToInstant].
 public final class Flba12Timestamps {
 
-    /// Byte width of a value.
-    public static final int WIDTH = 12;
-
     /// Little-endian `byte[]` views. The stored layout is little-endian, so on a little-endian
     /// machine each word is one unaligned native load.
     private static final VarHandle LONG_LE =
@@ -60,7 +57,7 @@ public final class Flba12Timestamps {
 
     /// The instant a UTC-adjusted column's value stands for.
     ///
-    /// @throws IllegalArgumentException if `bytes` is not [#WIDTH] bytes long
+    /// @throws IllegalArgumentException if `bytes` is not [FixedWidths#FLBA12_TIMESTAMP] bytes long
     /// @throws DateTimeException if the value lies outside the range of [Instant]
     public static Instant toInstant(byte[] bytes, LogicalType.TimeUnit unit) {
         return toInstant(bytes, 0, bytes.length, unit);
@@ -69,7 +66,7 @@ public final class Flba12Timestamps {
     /// The instant the `length` bytes at `offset` stand for, for a caller holding the value inside
     /// a larger buffer.
     ///
-    /// @throws IllegalArgumentException if `length` is not [#WIDTH]
+    /// @throws IllegalArgumentException if `length` is not [FixedWidths#FLBA12_TIMESTAMP]
     /// @throws DateTimeException if the value lies outside the range of [Instant]
     public static Instant toInstant(byte[] bytes, int offset, int length, LogicalType.TimeUnit unit) {
         requireWidth(length);
@@ -88,7 +85,7 @@ public final class Flba12Timestamps {
     /// epoch of the wall clock itself, so the arithmetic that gives an [Instant] gives the
     /// [LocalDateTime] read at UTC.
     ///
-    /// @throws IllegalArgumentException if `bytes` is not [#WIDTH] bytes long
+    /// @throws IllegalArgumentException if `bytes` is not [FixedWidths#FLBA12_TIMESTAMP] bytes long
     /// @throws DateTimeException if the value lies outside the range of [LocalDateTime]
     public static LocalDateTime toLocalDateTime(byte[] bytes, LogicalType.TimeUnit unit) {
         return toLocalDateTime(bytes, 0, bytes.length, unit);
@@ -97,7 +94,7 @@ public final class Flba12Timestamps {
     /// The wall clock the `length` bytes at `offset` stand for, for a caller holding the value
     /// inside a larger buffer.
     ///
-    /// @throws IllegalArgumentException if `length` is not [#WIDTH]
+    /// @throws IllegalArgumentException if `length` is not [FixedWidths#FLBA12_TIMESTAMP]
     /// @throws DateTimeException if the value lies outside the range of [LocalDateTime]
     public static LocalDateTime toLocalDateTime(byte[] bytes, int offset, int length, LogicalType.TimeUnit unit) {
         requireWidth(length);
@@ -115,7 +112,7 @@ public final class Flba12Timestamps {
     /// The value a column annotated `type` stores in the `length` bytes at `offset`: an [Instant]
     /// where the annotation is UTC-adjusted, a [LocalDateTime] where it is local.
     ///
-    /// @throws IllegalArgumentException if `length` is not [#WIDTH]
+    /// @throws IllegalArgumentException if `length` is not [FixedWidths#FLBA12_TIMESTAMP]
     /// @throws DateTimeException if the value lies outside the range of the Java type
     public static Temporal toTemporal(byte[] bytes, int offset, int length, LogicalType.TimestampType type) {
         return type.isAdjustedToUTC()
@@ -140,7 +137,7 @@ public final class Flba12Timestamps {
         if (Long.compareUnsigned(sum, lo) < 0) {
             hi++;
         }
-        byte[] bytes = new byte[WIDTH];
+        byte[] bytes = new byte[FixedWidths.FLBA12_TIMESTAMP];
         LONG_LE.set(bytes, 0, sum);
         INT_LE.set(bytes, Long.BYTES, Math.toIntExact(hi));
         return bytes;
@@ -223,15 +220,15 @@ public final class Flba12Timestamps {
     }
 
     private static void requireWidth(int length) {
-        if (length != WIDTH) {
+        if (length != FixedWidths.FLBA12_TIMESTAMP) {
             throw new IllegalArgumentException(
-                    "A FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP is " + WIDTH + " bytes, not " + length);
+                    "A FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP is " + FixedWidths.FLBA12_TIMESTAMP + " bytes, not " + length);
         }
     }
 
     private static DateTimeException outOfRange(byte[] bytes, int offset, String target) {
         return new DateTimeException("The FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP 0x"
-                + HEX.formatHex(bytes, offset, offset + WIDTH) + " (little-endian) lies outside the range of "
+                + HEX.formatHex(bytes, offset, offset + FixedWidths.FLBA12_TIMESTAMP) + " (little-endian) lies outside the range of "
                 + target);
     }
 }

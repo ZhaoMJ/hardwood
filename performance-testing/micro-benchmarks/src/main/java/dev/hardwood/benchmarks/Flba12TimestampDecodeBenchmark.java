@@ -27,6 +27,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.LogicalType;
 
@@ -90,8 +91,8 @@ public class Flba12TimestampDecodeBenchmark {
         unit = LogicalType.TimeUnit.valueOf(timeUnit);
         sink = new Instant[VALUES];
 
-        flbaLittleEndian = new byte[VALUES * Flba12Timestamps.WIDTH];
-        flbaBigEndian = new byte[VALUES * Flba12Timestamps.WIDTH];
+        flbaLittleEndian = new byte[VALUES * FixedWidths.FLBA12_TIMESTAMP];
+        flbaBigEndian = new byte[VALUES * FixedWidths.FLBA12_TIMESTAMP];
         int64Bytes = new byte[VALUES * Long.BYTES];
 
         Random random = new Random(20260813L);
@@ -105,11 +106,11 @@ public class Flba12TimestampDecodeBenchmark {
             long seconds = firstSecond + Math.floorMod(random.nextLong(), secondsSpan);
             int subSecond = random.nextInt(unitsPerSecond());
             byte[] encoded = Flba12Timestamps.encode(seconds, subSecond, unit);
-            System.arraycopy(encoded, 0, flbaLittleEndian, i * Flba12Timestamps.WIDTH,
-                    Flba12Timestamps.WIDTH);
-            for (int b = 0; b < Flba12Timestamps.WIDTH; b++) {
-                flbaBigEndian[i * Flba12Timestamps.WIDTH + b] =
-                        encoded[Flba12Timestamps.WIDTH - 1 - b];
+            System.arraycopy(encoded, 0, flbaLittleEndian, i * FixedWidths.FLBA12_TIMESTAMP,
+                    FixedWidths.FLBA12_TIMESTAMP);
+            for (int b = 0; b < FixedWidths.FLBA12_TIMESTAMP; b++) {
+                flbaBigEndian[i * FixedWidths.FLBA12_TIMESTAMP + b] =
+                        encoded[FixedWidths.FLBA12_TIMESTAMP - 1 - b];
             }
 
             // The INT64 form can only hold counts inside its own range, so its values
@@ -128,7 +129,7 @@ public class Flba12TimestampDecodeBenchmark {
     public long flba12Words() {
         long acc = 0;
         for (int i = 0; i < VALUES; i++) {
-            int offset = i * Flba12Timestamps.WIDTH;
+            int offset = i * FixedWidths.FLBA12_TIMESTAMP;
             acc += Flba12Timestamps.lowWord(flbaLittleEndian, offset)
                     ^ Flba12Timestamps.highWord(flbaLittleEndian, offset);
         }
@@ -141,7 +142,7 @@ public class Flba12TimestampDecodeBenchmark {
     public long flba12WordsByteByByte() {
         long acc = 0;
         for (int i = 0; i < VALUES; i++) {
-            int offset = i * Flba12Timestamps.WIDTH;
+            int offset = i * FixedWidths.FLBA12_TIMESTAMP;
             acc += lowWordByteByByte(flbaLittleEndian, offset)
                     ^ highWordByteByByte(flbaLittleEndian, offset);
         }
@@ -157,7 +158,7 @@ public class Flba12TimestampDecodeBenchmark {
     public long flba12WordsBigEndianSwap() {
         long acc = 0;
         for (int i = 0; i < VALUES; i++) {
-            int offset = i * Flba12Timestamps.WIDTH;
+            int offset = i * FixedWidths.FLBA12_TIMESTAMP;
             // Big-endian layout: bytes 0..3 are the high word, 4..11 the low word.
             long lo = Long.reverseBytes((long) LONG_LE.get(flbaBigEndian, offset + 4));
             int hi = Integer.reverseBytes((int) INT_LE.get(flbaBigEndian, offset));
@@ -173,7 +174,7 @@ public class Flba12TimestampDecodeBenchmark {
     public long flba12WordsBigEndianByteByByte() {
         long acc = 0;
         for (int i = 0; i < VALUES; i++) {
-            int offset = i * Flba12Timestamps.WIDTH;
+            int offset = i * FixedWidths.FLBA12_TIMESTAMP;
             acc += lowWordBigEndian(flbaBigEndian, offset) ^ highWordBigEndian(flbaBigEndian, offset);
         }
         return acc;
@@ -193,8 +194,8 @@ public class Flba12TimestampDecodeBenchmark {
     @Benchmark
     public Instant[] flba12Instant() {
         for (int i = 0; i < VALUES; i++) {
-            sink[i] = Flba12Timestamps.toInstant(flbaLittleEndian, i * Flba12Timestamps.WIDTH,
-                    Flba12Timestamps.WIDTH, unit);
+            sink[i] = Flba12Timestamps.toInstant(flbaLittleEndian, i * FixedWidths.FLBA12_TIMESTAMP,
+                    FixedWidths.FLBA12_TIMESTAMP, unit);
         }
         return sink;
     }

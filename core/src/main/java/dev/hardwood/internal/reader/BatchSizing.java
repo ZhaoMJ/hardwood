@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.util.List;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -163,7 +164,7 @@ public final class BatchSizing {
             case INT32, FLOAT -> 4;
             case INT64, DOUBLE -> 8;
             case BOOLEAN -> 1;
-            case INT96 -> 12;
+            case INT96 -> FixedWidths.INT96;
             // Rough estimate; UTF8/ENUM/JSON columns cost a little more per row — they
             // also carry a lazily-allocated per-value dictionary-index array for
             // interned-String reuse — but the byte-array estimate is intentionally

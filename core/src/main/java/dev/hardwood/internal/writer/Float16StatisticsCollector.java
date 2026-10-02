@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a `FLOAT16` column chunk's `min` / `max` / `null_count` / `nan_count`.
@@ -18,8 +19,6 @@ import dev.hardwood.metadata.Statistics;
 /// a zero bound is sign-normalized so a reader's `[min, max]` test is correct for either signed
 /// zero.
 final class Float16StatisticsCollector implements BinaryStatistics {
-
-    private static final int BYTES = 2;
 
     private float min;
     private float max;
@@ -65,8 +64,9 @@ final class Float16StatisticsCollector implements BinaryStatistics {
     }
 
     private static float decode(byte[] value) {
-        if (value.length != BYTES) {
-            throw new IllegalArgumentException("A FLOAT16 value is " + BYTES + " bytes, not " + value.length);
+        if (value.length != FixedWidths.FLOAT16) {
+            throw new IllegalArgumentException("A FLOAT16 value is " + FixedWidths.FLOAT16
+                    + " bytes, not " + value.length);
         }
         return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
     }

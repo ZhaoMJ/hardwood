@@ -9,6 +9,7 @@ package dev.hardwood.internal.predicate.dictionary;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.reader.Dictionary;
@@ -21,9 +22,6 @@ import dev.hardwood.internal.reader.Dictionary;
 /// entry: the value list is the smaller side, and sorting it once turns the pass over the
 /// dictionary into a binary search per entry rather than a comparison per (entry, value) pair.
 public final class DictionaryFilterSupport {
-
-    /// Width of a `FLOAT16` value as stored: `FIXED_LEN_BYTE_ARRAY(2)`.
-    private static final int FLOAT16_BYTES = 2;
 
     private DictionaryFilterSupport() {
     }
@@ -107,7 +105,7 @@ public final class DictionaryFilterSupport {
             return false;
         }
         for (byte[] entry : dict.values()) {
-            if (entry.length == FLOAT16_BYTES && Float.compare(StatisticsDecoder.decodeFloat16(entry), value) == 0) {
+            if (entry.length == FixedWidths.FLOAT16 && Float.compare(StatisticsDecoder.decodeFloat16(entry), value) == 0) {
                 return false;
             }
         }
@@ -121,7 +119,7 @@ public final class DictionaryFilterSupport {
             return false;
         }
         for (byte[] entry : dict.values()) {
-            if (entry.length != FLOAT16_BYTES) {
+            if (entry.length != FixedWidths.FLOAT16) {
                 continue;
             }
             float stored = StatisticsDecoder.decodeFloat16(entry);

@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.FileSchema;
@@ -122,7 +123,7 @@ final class AvroTypeNames {
 
     private int fixedSize(SchemaNode.PrimitiveNode prim) {
         if (prim.type() == PhysicalType.INT96) {
-            return 12;
+            return FixedWidths.INT96;
         }
         Integer typeLength = schema.getColumn(prim.columnIndex()).typeLength();
         if (typeLength == null) {
