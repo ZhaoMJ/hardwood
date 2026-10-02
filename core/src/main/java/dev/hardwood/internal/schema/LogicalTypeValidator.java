@@ -58,6 +58,12 @@ public class LogicalTypeValidator {
             requireNullable(columnName, repetition);
             return;
         }
+        if (logicalType instanceof LogicalType.GeographyType geography
+                && geography.edgeInterpolation() == LogicalType.EdgeInterpolationAlgorithm.UNKNOWN) {
+            // A reader's stand-in for an algorithm a footer named and this release does not know.
+            throw new IllegalArgumentException("GEOGRAPHY's edge interpolation algorithm is one this release "
+                    + "does not know, which has no value to write (column " + columnName + ")");
+        }
         Pairing pairing = AnnotationPairings.check(type, typeLength, logicalType);
         if (pairing instanceof Pairing.Illegal illegal) {
             throw refusal(columnName, type, typeLength, logicalType, illegal.fault());

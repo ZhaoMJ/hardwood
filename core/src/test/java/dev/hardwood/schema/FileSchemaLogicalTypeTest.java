@@ -80,6 +80,19 @@ class FileSchemaLogicalTypeTest {
                 .isEqualTo(ConvertedType.UINT_64);
     }
 
+    /// `UNKNOWN` stands for an edge algorithm a footer named that this release does not know; it
+    /// has no value to write, so a declared column carrying it is refused where it is declared
+    /// rather than once its data has been written.
+    @Test
+    void aGeographyOfAnUnknownAlgorithmIsRefused() {
+        assertThatThrownBy(() -> FileSchema.builder("schema")
+                .addColumn("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        LogicalType.geography(null, EdgeInterpolationAlgorithm.UNKNOWN)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("GEOGRAPHY's edge interpolation algorithm is one this release does not know, "
+                        + "which has no value to write (column area)");
+    }
+
     /// The legacy annotations denoted UTC-normalized values, but parquet-format requires a
     /// writer to annotate local times with them too, so libraries predating the union still see
     /// an annotation. The union carries the exact semantics.

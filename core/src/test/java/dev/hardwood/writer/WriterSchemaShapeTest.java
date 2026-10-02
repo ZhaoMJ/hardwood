@@ -126,6 +126,21 @@ class WriterSchemaShapeTest {
                         + "(column nothing)");
     }
 
+    /// A `GEOGRAPHY` of an algorithm the reader did not know, as a schema read from such a file
+    /// carries it, has no value to write; the writer refuses it before any data is written.
+    @Test
+    void rejectsGeographyOfAnUnknownAlgorithmFromElements() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 1),
+                SchemaElement.primitive("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        LogicalType.geography(null, LogicalType.EdgeInterpolationAlgorithm.UNKNOWN))));
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("GEOGRAPHY's edge interpolation algorithm is one this release does not know, "
+                        + "which has no value to write (column area)");
+    }
+
     /// A `FIXED_LEN_BYTE_ARRAY` without a positive width has no value the writer could encode.
     @ParameterizedTest
     @NullSource
