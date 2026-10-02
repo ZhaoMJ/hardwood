@@ -16,6 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.UUID;
 
 import dev.hardwood.internal.writer.RejectedRecordException;
@@ -198,12 +199,20 @@ public final class PhysicalValueConverter {
             throw new RejectedRecordException(field, "Field " + field + ": " + value + " needs " + minimal.length
                     + " bytes but the column is FIXED_LEN_BYTE_ARRAY(" + typeLength + ")");
         }
-        byte[] padded = new byte[typeLength];
-        // Sign-extend into the leading bytes so the two's complement value is preserved.
-        byte fill = (byte) (minimal[0] < 0 ? 0xFF : 0x00);
-        int prefix = typeLength - minimal.length;
-        for (int i = 0; i < prefix; i++) {
-            padded[i] = fill;
+        return signExtend(minimal, typeLength);
+    }
+
+    /// The big-endian two's complement `minimal` widened to `width` bytes, the sign extended into
+    /// the leading ones so the value is preserved: the encoding of a `FIXED_LEN_BYTE_ARRAY`
+    /// `DECIMAL`. The caller has refused a value wider than `width`.
+    public static byte[] signExtend(byte[] minimal, int width) {
+        if (minimal.length == width) {
+            return minimal;
+        }
+        byte[] padded = new byte[width];
+        int prefix = width - minimal.length;
+        if (minimal[0] < 0) {
+            Arrays.fill(padded, 0, prefix, (byte) 0xFF);
         }
         System.arraycopy(minimal, 0, padded, prefix, minimal.length);
         return padded;
@@ -254,19 +263,31 @@ public final class PhysicalValueConverter {
     /// The 12 bytes of an `INTERVAL`: months, days and millis as little-endian unsigned
     /// 4-byte fields, the layout [LogicalTypeConverter#bytesToInterval] reads back.
     public static byte[] intervalToBytes(String field, PqInterval value) {
+        return intervalToBytes(unsignedComponent(field, value.months(), "months"),
+                unsignedComponent(field, value.days(), "days"),
+                unsignedComponent(field, value.milliseconds(), "millis"));
+    }
+
+    /// The 12 bytes of an `INTERVAL` whose components are the low 32 bits of `months`, `days`
+    /// and `millis`, for a caller that has measured each against the unsigned range and words its
+    /// own refusal of one outside it.
+    public static byte[] intervalToBytes(int months, int days, int millis) {
         byte[] bytes = new byte[FixedWidths.INTERVAL];
-        writeUnsignedIntLittleEndian(field, bytes, 0, value.months(), "months");
-        writeUnsignedIntLittleEndian(field, bytes, Integer.BYTES, value.days(), "days");
-        writeUnsignedIntLittleEndian(field, bytes, 2 * Integer.BYTES, value.milliseconds(), "millis");
+        writeIntLittleEndian(bytes, 0, months);
+        writeIntLittleEndian(bytes, Integer.BYTES, days);
+        writeIntLittleEndian(bytes, 2 * Integer.BYTES, millis);
         return bytes;
     }
 
-    private static void writeUnsignedIntLittleEndian(String field, byte[] target, int offset, long value,
-                                                     String component) {
+    private static int unsignedComponent(String field, long value, String component) {
         if (value < 0 || value > 0xFFFFFFFFL) {
             throw new RejectedRecordException(field, "Field " + field + ": INTERVAL " + component + " is " + value
                     + ", outside the unsigned 32-bit range the format stores");
         }
+        return (int) value;
+    }
+
+    private static void writeIntLittleEndian(byte[] target, int offset, int value) {
         for (int i = 0; i < Integer.BYTES; i++) {
             target[offset + i] = (byte) (value >>> (i * Byte.SIZE));
         }

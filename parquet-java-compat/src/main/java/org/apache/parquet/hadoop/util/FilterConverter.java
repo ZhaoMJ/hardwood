@@ -19,6 +19,7 @@ import org.apache.parquet.filter2.predicate.Operators;
 import org.apache.parquet.io.api.Binary;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -172,7 +173,7 @@ final class FilterConverter {
             return new BigDecimal(unscaled, decimal.scale());
         }
         if (logicalType instanceof LogicalType.Float16Type && bytes.length == FixedWidths.FLOAT16) {
-            return Float.float16ToFloat((short) ((bytes[1] & 0xFF) << 8 | bytes[0] & 0xFF));
+            return LogicalTypeConverter.float16At(bytes, 0);
         }
         return bytes;
     }

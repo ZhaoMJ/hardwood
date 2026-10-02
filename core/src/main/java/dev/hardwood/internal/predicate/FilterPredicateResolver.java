@@ -20,11 +20,11 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.UUID;
 import java.util.function.Function;
 
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.conversion.PhysicalValueConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
@@ -310,7 +310,7 @@ public class FilterPredicateResolver {
                         leafColumn(p.column(), schema));
                 byte[][] probes = new byte[p.values().size()][];
                 for (int i = 0; i < probes.length; i++) {
-                    probes[i] = uuidBytes(p.values().get(i));
+                    probes[i] = PhysicalValueConverter.uuidToBytes(p.values().get(i));
                 }
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes, Comparison.BYTE_STRING);
             }
@@ -763,12 +763,9 @@ public class FilterPredicateResolver {
     /// The twelve bytes an `INTERVAL` column stores for `value`: its months, its days and its
     /// milliseconds, each an unsigned 32-bit little-endian integer.
     private static byte[] intervalBytes(String columnName, PqInterval value) {
-        byte[] bytes = new byte[FixedWidths.INTERVAL];
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(unsignedComponent(columnName, value, value.months()))
-                .putInt(unsignedComponent(columnName, value, value.days()))
-                .putInt(unsignedComponent(columnName, value, value.milliseconds()));
-        return bytes;
+        return PhysicalValueConverter.intervalToBytes(unsignedComponent(columnName, value, value.months()),
+                unsignedComponent(columnName, value, value.days()),
+                unsignedComponent(columnName, value, value.milliseconds()));
     }
 
     /// One component of an interval literal, as the four bytes the column stores it in. The cast
@@ -790,7 +787,7 @@ public class FilterPredicateResolver {
                     "Column '" + columnName + "' is a FLOAT16, whose literal is "
                             + FixedWidths.FLOAT16 + " bytes, not " + value.length);
         }
-        return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
+        return LogicalTypeConverter.float16At(value, 0);
     }
 
     /// Refuses a byte literal on an `INT96` column that is not the twelve bytes of a value.
@@ -893,14 +890,6 @@ public class FilterPredicateResolver {
         return columnSchema;
     }
 
-    /// The sixteen big-endian bytes a `UUID` column stores for `value`.
-    private static byte[] uuidBytes(UUID value) {
-        return ByteBuffer.allocate(16)
-                .putLong(value.getMostSignificantBits())
-                .putLong(value.getLeastSignificantBits())
-                .array();
-    }
-
     private static LogicalType.DecimalType getDecimalType(String columnName, ColumnSchema columnSchema) {
         if (columnSchema.logicalType() instanceof LogicalType.DecimalType decimalType) {
             return decimalType;
@@ -915,21 +904,11 @@ public class FilterPredicateResolver {
     /// The value has already been measured against the width by the caller.
     static byte[] toFixedLenDecimalBytes(BigInteger unscaled, int typeLength) {
         byte[] minimal = unscaled.toByteArray();
-        if (minimal.length == typeLength) {
-            return minimal;
-        }
         if (minimal.length > typeLength) {
             throw new IllegalStateException("An unscaled value of " + minimal.length
                     + " bytes reached the encoding for a FIXED_LEN_BYTE_ARRAY(" + typeLength + ") DECIMAL");
         }
-        byte[] padded = new byte[typeLength];
-        byte fill = (byte) (unscaled.signum() < 0 ? 0xFF : 0x00);
-        int offset = typeLength - minimal.length;
-        for (int i = 0; i < offset; i++) {
-            padded[i] = fill;
-        }
-        System.arraycopy(minimal, 0, padded, offset, minimal.length);
-        return padded;
+        return PhysicalValueConverter.signExtend(minimal, typeLength);
     }
 
     // ==================== Literals the column cannot hold ====================

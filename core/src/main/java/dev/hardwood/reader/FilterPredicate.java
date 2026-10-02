@@ -8,7 +8,6 @@
 package dev.hardwood.reader;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -19,6 +18,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.PhysicalValueConverter;
 import dev.hardwood.row.PqInterval;
 
 /// A predicate filtering the rows a reader returns.
@@ -742,10 +742,7 @@ public sealed interface FilterPredicate
 
     private static byte[] uuidToBytes(UUID value) {
         Objects.requireNonNull(value, "value");
-        ByteBuffer buffer = ByteBuffer.allocate(16);
-        buffer.putLong(value.getMostSignificantBits());
-        buffer.putLong(value.getLeastSignificantBits());
-        return buffer.array();
+        return PhysicalValueConverter.uuidToBytes(value);
     }
 
     // ==================== NULL Predicates ====================

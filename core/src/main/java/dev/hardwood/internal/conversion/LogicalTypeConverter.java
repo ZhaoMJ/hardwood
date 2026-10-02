@@ -371,7 +371,13 @@ public final class LogicalTypeConverter {
             throw new ParquetReadException(
                     "FLOAT16 requires exactly " + FixedWidths.FLOAT16 + " bytes, got " + length);
         }
-        // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
+        return float16At(bytes, offset);
+    }
+
+    /// The single-precision value of the two little-endian bytes of a `FLOAT16` at `offset`, for a
+    /// caller that has established the payload's width and words its own refusal of another.
+    public static float float16At(byte[] bytes, int offset) {
+        // `& 0xFF` blocks sign extension on the byte→int promotion.
         short raw = (short) ((bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8));
         return Float.float16ToFloat(raw);
     }

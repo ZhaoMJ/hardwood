@@ -8,6 +8,7 @@
 package dev.hardwood.internal.writer;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a `FLOAT16` column chunk's `min` / `max` / `null_count` / `nan_count`.
@@ -68,7 +69,7 @@ final class Float16StatisticsCollector implements BinaryStatistics {
             throw new IllegalArgumentException("A FLOAT16 value is " + FixedWidths.FLOAT16
                     + " bytes, not " + value.length);
         }
-        return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
+        return LogicalTypeConverter.float16At(value, 0);
     }
 
     private static byte[] encode(float value) {

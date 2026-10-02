@@ -10,6 +10,8 @@ package dev.hardwood.internal.predicate;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+
 /// Decodes raw statistics bytes from Parquet metadata to typed values.
 ///
 /// Parquet statistics are stored as little-endian byte arrays. This utility
@@ -34,8 +36,7 @@ public class StatisticsDecoder {
 
     /// Decode a 2-byte little-endian IEEE 754 binary16 value (FLOAT16) widened to float.
     public static float decodeFloat16(byte[] bytes) {
-        short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
-        return Float.float16ToFloat(raw);
+        return LogicalTypeConverter.float16At(bytes, 0);
     }
 
     /// Decode an 8-byte little-endian IEEE 754 value as a double.
