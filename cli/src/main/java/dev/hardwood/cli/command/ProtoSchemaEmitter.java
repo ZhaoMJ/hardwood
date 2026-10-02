@@ -14,6 +14,7 @@ import java.util.Set;
 
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.internal.schema.SchemaNames;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
@@ -173,9 +174,7 @@ final class ProtoSchemaEmitter {
         boolean representable = key instanceof SchemaNode.PrimitiveNode keyPrim
                 && switch (keyPrim.type()) {
             case BOOLEAN, INT32, INT64 -> true;
-            case BYTE_ARRAY -> keyPrim.logicalType() instanceof LogicalType.StringType
-                    || keyPrim.logicalType() instanceof LogicalType.EnumType
-                    || keyPrim.logicalType() instanceof LogicalType.JsonType;
+            case BYTE_ARRAY -> TextColumns.isAnnotatedText(keyPrim.type(), keyPrim.logicalType());
             case FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
         };
         if (!representable) {
@@ -288,9 +287,7 @@ final class ProtoSchemaEmitter {
             case INT96 -> "bytes";
             case FLOAT -> "float";
             case DOUBLE -> "double";
-            case BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.StringType
-                    || prim.logicalType() instanceof LogicalType.EnumType
-                    || prim.logicalType() instanceof LogicalType.JsonType ? "string" : "bytes";
+            case BYTE_ARRAY -> TextColumns.isAnnotatedText(prim.type(), prim.logicalType()) ? "string" : "bytes";
             case FIXED_LEN_BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.UuidType ? "string" : "bytes";
         };
     }

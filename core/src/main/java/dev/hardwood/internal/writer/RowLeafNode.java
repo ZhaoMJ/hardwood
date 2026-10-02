@@ -15,6 +15,7 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.PhysicalValueConverter;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -107,7 +108,7 @@ final class RowLeafNode extends RowNode {
     }
 
     void setString(String value) {
-        require(physicalType == PhysicalType.BYTE_ARRAY && isStringAnnotated(),
+        require(TextColumns.holdsText(physicalType, logicalType),
                 "setString", "a BYTE_ARRAY column annotated STRING, ENUM or JSON, or unannotated");
         if (value == null) {
             setNull();
@@ -312,13 +313,6 @@ final class RowLeafNode extends RowNode {
         require(logicalType instanceof LogicalType.TimestampType type && type.isAdjustedToUTC() == adjustedToUtc,
                 setter, "a column annotated TIMESTAMP with isAdjustedToUTC=" + adjustedToUtc);
         return (LogicalType.TimestampType) logicalType;
-    }
-
-    private boolean isStringAnnotated() {
-        return logicalType == null
-                || logicalType instanceof LogicalType.StringType
-                || logicalType instanceof LogicalType.EnumType
-                || logicalType instanceof LogicalType.JsonType;
     }
 
     private void require(boolean condition, String setter, String requirement) {

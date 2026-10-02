@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
@@ -52,10 +53,7 @@ enum LeafKind {
 
     /// How a leaf of this physical type and annotation decodes.
     static LeafKind of(PhysicalType type, LogicalType logicalType) {
-        if (type == PhysicalType.BYTE_ARRAY
-                && (logicalType instanceof LogicalType.StringType
-                    || logicalType instanceof LogicalType.EnumType
-                    || logicalType instanceof LogicalType.JsonType)) {
+        if (TextColumns.isAnnotatedText(type, logicalType)) {
             return STRING;
         }
         if (LogicalTypeConverter.isLegacyInt96Timestamp(type, logicalType)) {

@@ -14,8 +14,8 @@ import java.util.Set;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.SchemaNames;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -153,9 +153,7 @@ final class AvroSchemaEmitter {
                 yield unsignedInt ? "long" : "int";
             }
             case INT64 -> "long";
-            case BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.StringType
-                    || prim.logicalType() instanceof LogicalType.EnumType
-                    || prim.logicalType() instanceof LogicalType.JsonType ? "string" : "bytes";
+            case BYTE_ARRAY -> TextColumns.isAnnotatedText(prim.type(), prim.logicalType()) ? "string" : "bytes";
             case FIXED_LEN_BYTE_ARRAY, INT96 -> throw new IllegalArgumentException(
                     "Fixed-width types are rendered as named Avro fixed types, not scalars");
         };
@@ -205,10 +203,7 @@ final class AvroSchemaEmitter {
     /// JSON. Anything else is reported, never silently narrowed.
     static void validateAvroMapKey(SchemaNode key, String mapName) {
         boolean representable = key instanceof SchemaNode.PrimitiveNode keyPrim
-                && keyPrim.type() == PhysicalType.BYTE_ARRAY
-                && (keyPrim.logicalType() instanceof LogicalType.StringType
-                        || keyPrim.logicalType() instanceof LogicalType.EnumType
-                        || keyPrim.logicalType() instanceof LogicalType.JsonType);
+                && TextColumns.isAnnotatedText(keyPrim.type(), keyPrim.logicalType());
         if (!representable) {
             throw new IllegalArgumentException("Avro map keys must be STRING, ENUM, or JSON; map '" + mapName
                     + "' has " + SchemaCommand.describeKey(key));

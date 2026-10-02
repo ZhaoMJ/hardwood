@@ -34,6 +34,13 @@ public final class TextColumns {
         return type == PhysicalType.BYTE_ARRAY && (logicalType == null || isText(logicalType));
     }
 
+    /// Whether the column is annotated as text, which [#holdsText] widens by the unannotated
+    /// `BYTE_ARRAY`. A reader that hands back a value of the column's own type decodes these
+    /// columns to a `String`, and the unannotated one to its stored bytes.
+    public static boolean isAnnotatedText(PhysicalType type, LogicalType logicalType) {
+        return type == PhysicalType.BYTE_ARRAY && logicalType != null && isText(logicalType);
+    }
+
     /// Whether the annotation says the stored bytes are the UTF-8 encoding of a string.
     private static boolean isText(LogicalType logicalType) {
         return switch (logicalType) {
