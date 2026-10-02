@@ -18,7 +18,6 @@ import java.time.temporal.Temporal;
 import java.util.HexFormat;
 
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
 
 /// The `TIMESTAMP` values a `FIXED_LEN_BYTE_ARRAY(12)` column stores.
 ///
@@ -44,15 +43,6 @@ public final class Flba12Timestamps {
     private static final HexFormat HEX = HexFormat.of();
 
     private Flba12Timestamps() {
-    }
-
-    /// Whether a column of this physical type and annotation stores its timestamps in 12 bytes
-    /// rather than an `INT64`. The width itself is not consulted: `FileSchema` drops a `TIMESTAMP`
-    /// from a `FIXED_LEN_BYTE_ARRAY` of any other width, so an annotated column of that physical
-    /// type is 12 bytes wide.
-    public static boolean isCarriedBy(PhysicalType physicalType, LogicalType logicalType) {
-        return physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                && logicalType instanceof LogicalType.TimestampType;
     }
 
     /// The instant a UTC-adjusted column's value stands for.
