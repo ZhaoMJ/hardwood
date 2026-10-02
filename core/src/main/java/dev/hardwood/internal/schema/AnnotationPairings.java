@@ -106,9 +106,9 @@ public final class AnnotationPairings {
 
     /// Whether the format defines `annotation` over a column of this physical type and width.
     ///
-    /// A `FIXED_LEN_BYTE_ARRAY` that declares no width is not the annotation's fault: that column
-    /// cannot be decoded at all and [FixedWidthValidator] refuses it by name, so a width-fixing
-    /// annotation over it is classified as though the width matched.
+    /// A `FIXED_LEN_BYTE_ARRAY` that declares no width, or one that is not positive, is not the
+    /// annotation's fault: that column cannot be decoded at all and [FixedWidthValidator] refuses
+    /// it by name, so a width-fixing annotation over it is classified as though the width matched.
     ///
     /// @param type the column's physical type
     /// @param typeLength the `FIXED_LEN_BYTE_ARRAY` width, `null` for any other type
@@ -164,12 +164,18 @@ public final class AnnotationPairings {
         return actual == required ? LEGAL : new Illegal(new WrongPhysicalType(allowed));
     }
 
+    /// Whether a `FIXED_LEN_BYTE_ARRAY` declares a width its values can have. One that does not is
+    /// [FixedWidthValidator]'s to refuse, whatever annotates it.
+    private static boolean hasUsableWidth(Integer typeLength) {
+        return typeLength != null && typeLength > 0;
+    }
+
     /// An annotation parquet-format fixes to one `FIXED_LEN_BYTE_ARRAY` width.
     private static Pairing fixedWidth(PhysicalType type, Integer typeLength, int width) {
         if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             return new Illegal(new WrongPhysicalType(FIXED_ONLY));
         }
-        return typeLength == null || typeLength == width ? LEGAL : new Illegal(new WrongWidth(width));
+        return !hasUsableWidth(typeLength) || typeLength == width ? LEGAL : new Illegal(new WrongWidth(width));
     }
 
     /// "INT(8, true), INT(16, true), and INT(32, true) must annotate an int32 primitive type and
@@ -185,7 +191,7 @@ public final class AnnotationPairings {
     /// whose range the `INT64` form cannot hold.
     private static Pairing timestampPairing(PhysicalType type, Integer typeLength) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return typeLength == null || typeLength == Flba12Timestamps.WIDTH
+            return !hasUsableWidth(typeLength) || typeLength == Flba12Timestamps.WIDTH
                     ? LEGAL
                     : new Illegal(new WrongWidth(Flba12Timestamps.WIDTH));
         }
@@ -206,9 +212,8 @@ public final class AnnotationPairings {
         if (!held) {
             return new Illegal(new WrongPhysicalType(DECIMAL_TYPES));
         }
-        // A FIXED_LEN_BYTE_ARRAY with no declared width has no digits to count, and is
-        // FixedWidthValidator's to refuse.
-        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && (typeLength == null || typeLength <= 0)) {
+        // A FIXED_LEN_BYTE_ARRAY with no usable width has no digits to count.
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && !hasUsableWidth(typeLength)) {
             return LEGAL;
         }
         long maxPrecision = type == PhysicalType.FIXED_LEN_BYTE_ARRAY

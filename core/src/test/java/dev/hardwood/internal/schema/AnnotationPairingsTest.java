@@ -132,15 +132,27 @@ class AnnotationPairingsTest {
                 .isEqualTo(new Pairing.Fault.WrongWidth(12));
     }
 
-    /// A `FIXED_LEN_BYTE_ARRAY` that declares no width states nothing the annotation contradicts.
-    /// `FixedWidthValidator` refuses that column by name, and the writer refuses the missing width
-    /// where a schema is declared, so the pairing itself is legal here.
-    @Test
-    void anUndeclaredWidthIsNotTheAnnotationsFault() {
-        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, LogicalType.uuid()))
+    /// A `FIXED_LEN_BYTE_ARRAY` that declares no width, or a width that is not positive, states
+    /// nothing the annotation contradicts. `FixedWidthValidator` refuses that column by name, and
+    /// the writer refuses the width where a schema is declared, so the pairing itself is legal
+    /// here, for every annotation that fixes or counts a width alike.
+    @ParameterizedTest
+    @MethodSource("unusableWidths")
+    void anUnusableWidthIsNotTheAnnotationsFault(Integer typeLength) {
+        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, LogicalType.uuid()))
                 .isInstanceOf(Pairing.Legal.class);
-        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, LogicalType.decimal(40, 2)))
+        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, LogicalType.interval()))
                 .isInstanceOf(Pairing.Legal.class);
+        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, LogicalType.float16()))
+                .isInstanceOf(Pairing.Legal.class);
+        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, timestamp()))
+                .isInstanceOf(Pairing.Legal.class);
+        assertThat(check(PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, LogicalType.decimal(40, 2)))
+                .isInstanceOf(Pairing.Legal.class);
+    }
+
+    private static Stream<Integer> unusableWidths() {
+        return Stream.of(null, 0, -1);
     }
 
     @Test

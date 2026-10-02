@@ -193,12 +193,15 @@ class ConversionFaultTest {
     /// A footer that omits `type_length` states no width for the annotation to contradict,
     /// so nothing here is provably wrong and the annotation is kept. Such a column cannot be
     /// decoded at all, and `FixedWidthValidator` refuses it by name — reporting it as a bad
-    /// annotation would drop a sound one and describe the wrong defect. A `DECIMAL` has no
-    /// digits to count in a width that is absent or not positive, so neither is its fault.
+    /// annotation would drop a sound one and describe the wrong defect. A width that is not
+    /// positive is no width either, for an annotation that fixes one and for a `DECIMAL`, which
+    /// has no digits to count in it.
     @Test
     void anUndeclaredWidthIsNotTheAnnotationsFault() {
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, LogicalType.float16()))
                 .isNull();
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 0, LogicalType.uuid())).isNull();
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, -1, timestamp())).isNull();
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, decimal())).isNull();
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 0, decimal())).isNull();
     }
