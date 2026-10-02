@@ -215,7 +215,7 @@ class BatchFilterCompilerTest {
     /// takes the comparison and compares in it rather than the compiler admitting only byte
     /// strings.
     @Test
-    void binaryLeaf_everySliceOrderAndOperator_isEligible() {
+    void binaryLeaf_everyComparisonAndOperator_isEligible() {
         FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
 
         for (Comparison comparison : Comparison.values()) {

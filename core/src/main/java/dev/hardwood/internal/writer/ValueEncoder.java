@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
-import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
@@ -31,7 +31,7 @@ abstract class ValueEncoder {
     static ValueEncoder forColumn(ColumnSchema column, ColumnEncoding encoding,
                                   int statisticsTruncationLength, int startingCapacity) {
         PhysicalType type = column.type();
-        boolean unsigned = isUnsigned(column);
+        boolean unsigned = AnnotationPairings.ordersUnsigned(column.logicalType());
         // Only AUTO decides between a dictionary and something else, so only AUTO needs one
         // built: a column under a named policy pays neither the interning nor the index array.
         boolean dictionary = encoding == ColumnEncoding.AUTO;
@@ -163,10 +163,6 @@ abstract class ValueEncoder {
     private static final int MIN_BUFFER_VALUES = 512;
     private static final int MAX_BUFFER_VALUES = 1 << 16;
 
-    /// Whether the column's statistics compare unsigned: only the `UINT_*` annotations do.
-    private static boolean isUnsigned(ColumnSchema column) {
-        return column.logicalType() instanceof LogicalType.IntType integer && !integer.isSigned();
-    }
 
     private static int requireTypeLength(ColumnSchema column) {
         if (column.typeLength() == null) {

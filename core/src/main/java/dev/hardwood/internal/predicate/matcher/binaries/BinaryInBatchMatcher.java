@@ -12,6 +12,7 @@ import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
 
 /// `value IN (members)` over a byte-array column: a row matches when it equals any member, under the
 /// same equality [BinaryEqBatchMatcher] applies. Linear scan over the members — IN lists in practice
@@ -20,12 +21,12 @@ public final class BinaryInBatchMatcher implements BinaryBatchMatcher {
 
     private final byte[][] members;
     private final boolean byteExact;
-    private final BinaryComparator.SliceOrder order;
+    private final ByteColumnOrder order;
 
     public BinaryInBatchMatcher(byte[][] members, Comparison comparison) {
         this.members = members;
         this.byteExact = comparison.byteExact();
-        this.order = BinaryComparator.sliceOrder(comparison);
+        this.order = BinaryComparator.order(comparison);
     }
 
     @Override

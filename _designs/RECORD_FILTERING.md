@@ -99,12 +99,12 @@ A matcher writes bit `i` of a per-batch `long[]` when row `i` **definitely** sat
 
 **Stale bits.** Bitmaps are sized to the batch capacity and reused across batches. A matcher and `MergePlanEvaluator` write only the words covering `[0, recordCount)`, and bits past `recordCount` may hold values from an earlier, longer batch. Every consumer bounds its reads by the record count: `FlatRowReader`'s bit scan and run walk stop at the batch size, `FlatRowReader.countMatches` masks the tail word, and `SelectionEngine.collectSetBits` iterates `[0, recordCount)`. A new consumer of these bitmaps must do the same. Untested.
 
-**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place, in the order `BinaryComparator.sliceOrder` gives for the leaf's `Comparison`. Every binary leaf is eligible: the switch has no `default` and no constant standing for an order without a slice comparison, so a new `Comparison` is answered there and nothing falls back for want of a comparison.
+**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place, in the `AnnotationPairings.ByteColumnOrder` that `BinaryComparator.order` gives for the leaf's `Comparison`, the order the writer collected the column's bounds in. Every binary leaf is eligible: the switch has no `default` and every `Comparison` names an order with a slice comparison, so a new `Comparison` is answered there and nothing falls back for want of a comparison.
 
-| `SliceOrder` | Compares | Carried by |
+| `ByteColumnOrder` | Compares | Carried by |
 |---|---|---|
-| `UNSIGNED` | unsigned lexicographic | a byte string, and the stored bytes of any byte column |
-| `SIGNED` | big-endian two's complement, the shorter slice sign-extended | a `DECIMAL` of either byte-array type |
+| `BYTES` | unsigned lexicographic | a byte string, and the stored bytes of any byte column |
+| `SIGNED_BIG_ENDIAN` | big-endian two's complement, the shorter slice sign-extended | a `DECIMAL` of either byte-array type |
 | `SIGNED_LITTLE_ENDIAN` | little-endian two's complement of one width | a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` |
 | `INT96_INSTANT` | the instant encoded: whole days, then nanoseconds within the day | a legacy `INT96` timestamp |
 

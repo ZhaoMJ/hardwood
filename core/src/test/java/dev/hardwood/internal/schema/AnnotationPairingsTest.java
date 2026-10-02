@@ -201,6 +201,37 @@ class AnnotationPairingsTest {
         return LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
     }
 
+    /// The order a byte-stored column's values sort in, which the writer's bounds and the
+    /// resolver's byte literals both read.
+    @Test
+    void aByteColumnSortsInTheOrderItsAnnotationNames() {
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.BYTE_ARRAY, null))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.BYTES);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.uuid()))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.BYTES);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2)))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_BIG_ENDIAN);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.decimal(9, 2)))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_BIG_ENDIAN);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, timestamp()))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_LITTLE_ENDIAN);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16()))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.HALF_FLOAT);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, null))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.INT96_INSTANT);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval()))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.NONE);
+        assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, LogicalType.nullType()))
+                .isEqualTo(AnnotationPairings.ByteColumnOrder.INT96_INSTANT);
+    }
+
+    @Test
+    void aColumnNotStoredAsBytesHasNoByteOrder() {
+        assertThatThrownBy(() -> AnnotationPairings.byteColumnOrder(PhysicalType.INT64, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("INT64 is not stored as bytes");
+    }
+
     /// The legacy `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` annotate an `INT64` alone, although
     /// the `TIMESTAMP` they stand for is also carried by a `FIXED_LEN_BYTE_ARRAY(12)`; every other
     /// converted type adds nothing to its logical counterpart's pairing.

@@ -211,7 +211,7 @@ Bounds are always exact unless truncated, so a reader may treat `min_value == ma
 
 ### Sort order
 
-A column's order is its logical type's where it has one, and its physical type's otherwise. `ValueEncoder.forColumn` and `BinaryStatistics.forColumn` select the collector from the `ColumnSchema` once per chunk, so the order costs nothing per value.
+A column's order is its logical type's where it has one, and its physical type's otherwise. `ValueEncoder.forColumn` and `BinaryStatistics.forColumn` select the collector from the `ColumnSchema` once per chunk, so the order costs nothing per value. Both read the order from `AnnotationPairings`: `ordersUnsigned` for an integer column and `byteColumnOrder` for a byte-stored one, the same answers `FilterPredicateResolver` compares a literal by, so a chunk's bounds and a predicate over them are in one order.
 
 | Order | Columns | Collector |
 |---|---|---|

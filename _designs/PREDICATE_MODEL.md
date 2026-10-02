@@ -174,17 +174,17 @@ Tests: `FilterPredicateResolverTest`, `FilterPredicateTest`.
 
 A `BinaryPredicate` and a `BinaryInPredicate` carry a `Comparison`, which fixes both the order the bytes compare in and whether a value has exactly one encoding in the column. The two are one choice because the order is what decides which encodings stand for the same value.
 
-| `Comparison` | Used for | `byteExact` | `BinaryComparator.sliceOrder` |
+| `Comparison` | Used for | `byteExact` | `BinaryComparator.order` |
 |---|---|---|---|
-| `BYTE_STRING` | byte-ordered columns: text, `BSON`, `UUID`, `INTERVAL`, geometry, unannotated binary | yes | unsigned |
-| `FIXED_DECIMAL` | `DECIMAL` over `FIXED_LEN_BYTE_ARRAY`, typed or `byte[]` literal | yes | signed |
-| `VARIABLE_DECIMAL` | `DECIMAL` over `BYTE_ARRAY` | no | signed |
-| `FIXED_TIMESTAMP` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, typed or `byte[]` literal | yes | signed little-endian |
-| `INT96_INSTANT` | `Instant` on `INT96` | no | instant |
-| `STORED_BYTES` | `byte[]` equality on a value-ordered column with several encodings | yes | unsigned |
+| `BYTE_STRING` | byte-ordered columns: text, `BSON`, `UUID`, `INTERVAL`, geometry, unannotated binary | yes | `BYTES` |
+| `FIXED_DECIMAL` | `DECIMAL` over `FIXED_LEN_BYTE_ARRAY`, typed or `byte[]` literal | yes | `SIGNED_BIG_ENDIAN` |
+| `VARIABLE_DECIMAL` | `DECIMAL` over `BYTE_ARRAY` | no | `SIGNED_BIG_ENDIAN` |
+| `FIXED_TIMESTAMP` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, typed or `byte[]` literal | yes | `SIGNED_LITTLE_ENDIAN` |
+| `INT96_INSTANT` | `Instant` on `INT96` | no | `INT96_INSTANT` |
+| `STORED_BYTES` | `byte[]` equality on a value-ordered column with several encodings | yes | `BYTES` |
 
 - **`byteExact`** gates every shortcut that tests bytes rather than order: the Bloom filter probe, the dictionary's byte probe, and the byte-equality batch matchers. Without it, a padded spelling of the literal's value would hash or compare as a miss and its rows would be dropped. A `FLOAT16` `float` literal is not a `BinaryPredicate`; it skips the Bloom filter and is checked against the dictionary by decoded value ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)).
-- **`sliceOrder`** names the order a batch matcher compares byte slices in, and is the one mapping from a `Comparison` to a comparison: `Comparison.compare` reads it too, so the record path and the drain-side matchers cannot order the same column differently. Every `Comparison` has an order a slice comparison implements, so no binary predicate is kept off the batch path for want of one ([RECORD_FILTERING.md](RECORD_FILTERING.md)).
+- **`order`** names the `ByteColumnOrder` a batch matcher compares byte slices in, the one representation of a byte order that the writer's bounds and `AnnotationPairings.byteColumnOrder` use too, and is the one mapping from a `Comparison` to a comparison: `Comparison.compare` reads it too, so the record path and the drain-side matchers cannot order the same column differently. Every `Comparison` has an order a slice comparison implements, so no binary predicate is kept off the batch path for want of one ([RECORD_FILTERING.md](RECORD_FILTERING.md)).
 
 A `byte[]` literal goes through `orderingLiteral`, which names the typed literal of a value-ordered column or returns none for a byte-ordered one. On a byte-ordered column it resolves to `BYTE_STRING`. On a value-ordered one the ordered operators throw, naming the typed literal, and equality resolves as follows:
 
@@ -206,11 +206,11 @@ Every per-annotation decision is a `switch` over `LogicalType` (or over `Compari
 
 | Switch | Decides |
 |---|---|
-| `FilterPredicateResolver.orderingLiteral` | whether a binary column orders as its bytes, and which literal carries its order |
+| `AnnotationPairings.byteColumnOrder` | the order a byte-stored column's values sort in, shared by the writer's bounds, `orderingLiteral` (which literal carries the order) and the stored-byte equality helpers |
 | `ColumnLiterals.logical` | the literals a refusal message names |
 | `TextColumns.isText` | whether `getString` reads the column and a `String` is its literal |
 | `AnnotationPairings.namesAnOrder` | whether the type defines an order, shared by the ordered-operator refusal, bounds readability and the writer's statistics |
-| `BinaryComparator.sliceOrder` | the slice order of a `Comparison` |
+| `BinaryComparator.order` | the `ByteColumnOrder` of a `Comparison` |
 
 Enforced by the compiler.
 

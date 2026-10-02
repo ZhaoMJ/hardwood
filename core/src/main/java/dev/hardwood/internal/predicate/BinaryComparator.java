@@ -13,6 +13,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
 
 /// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
 /// BYTE_ARRAY), big-endian signed two's complement (for DECIMAL columns of either byte-array type),
@@ -85,40 +86,33 @@ public final class BinaryComparator {
     /// Compare the slice `a[aFrom, aTo)` against all of `b` in `order`.
     ///
     /// @return negative if the slice < b, zero if equal, positive if the slice > b
-    public static int compare(byte[] a, int aFrom, int aTo, byte[] b, SliceOrder order) {
+    ///
+    /// A `FLOAT16` is compared as the half it encodes, by `Float16Predicate` and the writer's own
+    /// collector, and a column without an order is compared in none, so neither is a slice order.
+    ///
+    /// @throws IllegalArgumentException if `order` is [ByteColumnOrder#HALF_FLOAT] or
+    ///         [ByteColumnOrder#NONE]
+    public static int compare(byte[] a, int aFrom, int aTo, byte[] b, ByteColumnOrder order) {
         return switch (order) {
-            case UNSIGNED -> compareUnsigned(a, aFrom, aTo, b);
-            case SIGNED -> compareSigned(a, aFrom, aTo, b);
+            case BYTES -> compareUnsigned(a, aFrom, aTo, b);
+            case SIGNED_BIG_ENDIAN -> compareSigned(a, aFrom, aTo, b);
             case SIGNED_LITTLE_ENDIAN -> compareSignedLittleEndian(a, aFrom, aTo, b);
             case INT96_INSTANT -> compareInt96(a, aFrom, aTo, b);
+            case HALF_FLOAT, NONE -> throw new IllegalArgumentException("No slice is compared in " + order);
         };
     }
 
-    /// An order [#compare(byte[], int, int, byte[], SliceOrder)] compares slices in. Every order a
-    /// binary column sorts in has a constant here, so a predicate on any such column is decidable
-    /// over slices.
-    public enum SliceOrder {
-        /// Unsigned lexicographic.
-        UNSIGNED,
-        /// Big-endian two's complement, sign-extending the shorter slice.
-        SIGNED,
-        /// Little-endian two's complement of one fixed width.
-        SIGNED_LITTLE_ENDIAN,
-        /// The instant a legacy `INT96` timestamp encodes.
-        INT96_INSTANT
-    }
-
-    /// The slice order `comparison` compares in.
+    /// The order `comparison` compares slices in.
     ///
     /// The byte-array matchers read the order from here, so a new
     /// [ResolvedPredicate.BinaryPredicate.Comparison] is answered once, in a switch with no
-    /// `default` and no constant standing for an order without a slice comparison.
-    public static SliceOrder sliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
+    /// `default`, and every comparison names an order that has a slice comparison.
+    public static ByteColumnOrder order(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
         return switch (comparison) {
-            case BYTE_STRING, STORED_BYTES -> SliceOrder.UNSIGNED;
-            case FIXED_DECIMAL, VARIABLE_DECIMAL -> SliceOrder.SIGNED;
-            case FIXED_TIMESTAMP -> SliceOrder.SIGNED_LITTLE_ENDIAN;
-            case INT96_INSTANT -> SliceOrder.INT96_INSTANT;
+            case BYTE_STRING, STORED_BYTES -> ByteColumnOrder.BYTES;
+            case FIXED_DECIMAL, VARIABLE_DECIMAL -> ByteColumnOrder.SIGNED_BIG_ENDIAN;
+            case FIXED_TIMESTAMP -> ByteColumnOrder.SIGNED_LITTLE_ENDIAN;
+            case INT96_INSTANT -> ByteColumnOrder.INT96_INSTANT;
         };
     }
 

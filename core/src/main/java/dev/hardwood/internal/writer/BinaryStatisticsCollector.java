@@ -10,14 +10,15 @@ package dev.hardwood.internal.writer;
 import java.util.Arrays;
 
 import dev.hardwood.internal.predicate.BinaryComparator;
+import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
 import dev.hardwood.metadata.Statistics;
 
-/// Accumulates a binary column chunk's `min` / `max` / `null_count` in one of the three orders a
-/// byte string is compared in: unsigned lexicographic — the type-defined order for an
+/// Accumulates a binary column chunk's `min` / `max` / `null_count` in the column's
+/// [ByteColumnOrder], compared through `BinaryComparator`. The writer uses three:
+/// unsigned lexicographic — the type-defined order for an
 /// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations —,
 /// signed big-endian two's complement, the order of a `DECIMAL`'s represented value, or signed
-/// little-endian two's complement, the order of a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`. All are
-/// the orders `BinaryComparator` compares in, which the signed arms call directly.
+/// little-endian two's complement, the order of a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`.
 ///
 /// Bounds are **truncated** to at most `truncationLength` bytes so a chunk of long values does
 /// not bloat the footer. A truncated `min` keeps the value's first *N* bytes — a prefix is `<=`
@@ -30,24 +31,14 @@ import dev.hardwood.metadata.Statistics;
 /// the bounds.
 final class BinaryStatisticsCollector implements BinaryStatistics {
 
-    /// The orders a byte string is compared in.
-    enum Order {
-        /// Unsigned byte-wise comparison.
-        LEXICOGRAPHIC,
-        /// Signed big-endian two's complement comparison of the represented value.
-        SIGNED_BIG_ENDIAN,
-        /// Signed little-endian two's complement comparison of the represented value.
-        SIGNED_LITTLE_ENDIAN
-    }
-
-    private final Order order;
+    private final ByteColumnOrder order;
     private final int truncationLength;
     private byte[] min;
     private byte[] max;
     private long nullCount;
     private boolean hasValues;
 
-    BinaryStatisticsCollector(Order order, int truncationLength) {
+    BinaryStatisticsCollector(ByteColumnOrder order, int truncationLength) {
         this.order = order;
         this.truncationLength = truncationLength;
     }
@@ -69,11 +60,7 @@ final class BinaryStatisticsCollector implements BinaryStatistics {
     }
 
     private int compare(byte[] left, byte[] right) {
-        return switch (order) {
-            case LEXICOGRAPHIC -> Arrays.compareUnsigned(left, right);
-            case SIGNED_BIG_ENDIAN -> BinaryComparator.compareSigned(left, right);
-            case SIGNED_LITTLE_ENDIAN -> BinaryComparator.compareSignedLittleEndian(left, right);
-        };
+        return BinaryComparator.compare(left, 0, left.length, right, order);
     }
 
     @Override

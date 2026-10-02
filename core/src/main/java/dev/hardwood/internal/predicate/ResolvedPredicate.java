@@ -179,7 +179,7 @@ public sealed interface ResolvedPredicate {
             ///         positive if `right` sorts first
             public int compare(byte[] left, byte[] right) {
                 return BinaryComparator.compare(left, 0, left.length, right,
-                        BinaryComparator.sliceOrder(this));
+                        BinaryComparator.order(this));
             }
 
             /// Whether the column can hold a given value only as exactly one byte string.

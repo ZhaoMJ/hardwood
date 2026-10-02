@@ -12,18 +12,19 @@ import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
 
 /// `value = literal` over a byte-array column.
 public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
 
     private final byte[] literal;
     private final boolean byteExact;
-    private final BinaryComparator.SliceOrder order;
+    private final ByteColumnOrder order;
 
     public BinaryEqBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
         this.byteExact = comparison.byteExact();
-        this.order = BinaryComparator.sliceOrder(comparison);
+        this.order = BinaryComparator.order(comparison);
     }
 
     @Override

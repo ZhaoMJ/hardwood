@@ -12,16 +12,17 @@ import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
 
 /// `value < literal` over a byte-array column, in the order the column's values sort in.
 public final class BinaryLtBatchMatcher implements BinaryBatchMatcher {
 
     private final byte[] literal;
-    private final BinaryComparator.SliceOrder order;
+    private final ByteColumnOrder order;
 
     public BinaryLtBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
-        this.order = BinaryComparator.sliceOrder(comparison);
+        this.order = BinaryComparator.order(comparison);
     }
 
     @Override

@@ -100,6 +100,98 @@ public final class AnnotationPairings {
         };
     }
 
+    /// The order the values of a byte-stored column sort in, as `parquet.thrift`'s `ColumnOrder`
+    /// gives it per annotation. It is the one representation of a byte order: the writer collects
+    /// bounds in it, a predicate's `Comparison` names one, and `BinaryComparator` compares byte
+    /// slices in each that has a slice comparison.
+    public enum ByteColumnOrder {
+        /// Unsigned byte-wise: the stored bytes order as the values do.
+        BYTES,
+        /// The number a big-endian two's complement encodes, the shorter value sign-extended: a
+        /// `DECIMAL`.
+        SIGNED_BIG_ENDIAN,
+        /// The count a little-endian two's complement of one width encodes: a
+        /// `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`.
+        SIGNED_LITTLE_ENDIAN,
+        /// The IEEE half a `FLOAT16` encodes, compared as that float rather than as a slice.
+        HALF_FLOAT,
+        /// The instant a legacy `INT96` timestamp encodes: whole days, then nanoseconds.
+        INT96_INSTANT,
+        /// No order: the annotation names none, as [#namesAnOrder] answers.
+        NONE
+    }
+
+    /// The order the values of a column stored as `INT96`, `BYTE_ARRAY` or
+    /// `FIXED_LEN_BYTE_ARRAY` sort in. The writer collects a byte column's bounds in it and the
+    /// resolver compares a byte literal in it, so the two cannot disagree about a column.
+    ///
+    /// The switch is exhaustive rather than a list of the value-ordered annotations, so one added
+    /// later has to state whether its values order as their bytes.
+    ///
+    /// @param type the column's physical type, one stored as bytes
+    /// @param annotation the column's annotation, `null` for an unannotated column
+    /// @throws IllegalArgumentException if `type` is not stored as bytes, or `annotation` is one
+    ///         [#check] refuses over it
+    public static ByteColumnOrder byteColumnOrder(PhysicalType type, LogicalType annotation) {
+        switch (type) {
+            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> {
+            }
+            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE ->
+                    throw new IllegalArgumentException(type + " is not stored as bytes");
+        }
+        // An INT96's twelve bytes are the legacy timestamp's, whatever else annotates it: NULL is
+        // the one annotation the grid keeps on one, and it changes nothing a byte literal compares.
+        if (type == PhysicalType.INT96) {
+            return ByteColumnOrder.INT96_INSTANT;
+        }
+        if (annotation == null) {
+            return ByteColumnOrder.BYTES;
+        }
+        if (!namesAnOrder(annotation)) {
+            return ByteColumnOrder.NONE;
+        }
+        return switch (annotation) {
+            case LogicalType.StringType ignored -> ByteColumnOrder.BYTES;
+            case LogicalType.EnumType ignored -> ByteColumnOrder.BYTES;
+            case LogicalType.JsonType ignored -> ByteColumnOrder.BYTES;
+            case LogicalType.BsonType ignored -> ByteColumnOrder.BYTES;
+            // Not in ColumnOrder's list, so the FIXED_LEN_BYTE_ARRAY's own unsigned byte order.
+            case LogicalType.UuidType ignored -> ByteColumnOrder.BYTES;
+            // "DECIMAL - signed comparison of the represented value"
+            case LogicalType.DecimalType ignored -> ByteColumnOrder.SIGNED_BIG_ENDIAN;
+            // "FLOAT16 - signed comparison of the represented value"
+            case LogicalType.Float16Type ignored -> ByteColumnOrder.HALF_FLOAT;
+            // "signed two's-complement comparison of the represented value"
+            case LogicalType.TimestampType ignored -> ByteColumnOrder.SIGNED_LITTLE_ENDIAN;
+            case LogicalType.IntType ignored -> throw notStoredAsBytes(type, annotation);
+            case LogicalType.DateType ignored -> throw notStoredAsBytes(type, annotation);
+            case LogicalType.TimeType ignored -> throw notStoredAsBytes(type, annotation);
+            // namesAnOrder has answered these above.
+            case LogicalType.IntervalType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.GeometryType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.GeographyType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.NullType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.VariantType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.ListType ignored -> throw orderAnsweredAbove(annotation);
+            case LogicalType.MapType ignored -> throw orderAnsweredAbove(annotation);
+        };
+    }
+
+    /// Whether an integer column's values compare unsigned: only the unsigned `INT` annotations
+    /// do. The narrower ones never diverge from the signed order over the values they hold, but
+    /// take the unsigned form too, so the annotation alone decides.
+    public static boolean ordersUnsigned(LogicalType annotation) {
+        return annotation instanceof LogicalType.IntType integer && !integer.isSigned();
+    }
+
+    private static IllegalArgumentException notStoredAsBytes(PhysicalType type, LogicalType annotation) {
+        return new IllegalArgumentException(annotation + " is not defined over " + type);
+    }
+
+    private static IllegalStateException orderAnsweredAbove(LogicalType annotation) {
+        return new IllegalStateException(annotation + " names no order, which namesAnOrder answers");
+    }
+
     /// Whether the format defines `annotation` over a column of this physical type and width.
     ///
     /// A `FIXED_LEN_BYTE_ARRAY` that declares no width, or one that is not positive, is not the
