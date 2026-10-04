@@ -97,13 +97,13 @@ The plan parses its dictionary on the first advance of its iterator, from the di
 
 ### Sequential plans
 
-A sequential plan knows the chunk's byte range, and discovers its pages as its iterator walks the headers. The range starts at the chunk's first page, or where a dictionary pruning has read ends. Its bytes come through chunk handles of a fixed size (the [chunk size](#row-limits-and-chunk-sizing)): entering a chunk creates the next chunk's handle and chains it for one-ahead prefetch, and a page that straddles two chunks is assembled from both into one direct buffer (`assembleFromChunks`). A header is read with a bounded peek that grows while the header is truncated, up to a limit that marks the file corrupt.
+A sequential plan knows the chunk's byte range, and discovers its pages as its iterator walks the headers. The range starts at the chunk's first page, or where a dictionary pruning has read ends. Its bytes come through chunk handles of a fixed size (the [chunk size](#row-limits-and-chunk-sizing)): entering a chunk creates the next chunk's handle and chains it for one-ahead prefetch, and a page that straddles two chunks is assembled from both into one direct buffer (`assembleFromChunks`). A header peek, or the repetition-level read of a masked nested page, can run one or more chunks past the page's start before the page itself is read from there. No read starts before the header of the page being read, so the walk holds every handle from that header onward until it passes them, and no byte of the chunk is fetched twice. Beyond the current handle and its prefetched successor, the handles held are those between the current page's header and where its header peek or repetition-level read ended. A header is read with a bounded peek that grows while the header is truncated, up to a limit that marks the file corrupt.
 
 The walk skips non-data pages. For each data page it decides, in order: drop the page when its row mask is empty, without reading its body; emit a null placeholder when inline page statistics prove no row matches ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#inline-page-statistics)); otherwise emit the page with its mask. It stops when the row limit is covered ([row limits](#row-limits-and-chunk-sizing)) or the cursor has passed the last matching row.
 
 **Counters.** `valuesRead` accumulates every data page's `num_values` and, under masks, `recordsRead` every data page's record count, whether the page was kept, dropped or replaced. A walk that reaches the end of the chunk checks `valuesRead` against the chunk's `num_values` and, under masks, `recordsRead` against the row group's row count, and raises `ParquetReadException` on a mismatch. A walk that stops early at the row limit or past the last matching row skips both checks.
 
-Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarlyExitTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `PageRangeIoTest`, `DictionaryPrefixFetchTest`, `SequentialFetchPlanEarlyExitTest`, `SequentialChunkCrossingIoTest`, `S3SelectiveReadJfrIT` (s3).
 
 ## Chunk handles and prefetch
 
